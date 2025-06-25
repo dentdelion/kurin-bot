@@ -32,7 +32,7 @@ jobs:
         run: |
           cd telegram-bot
           docker-compose -f docker-compose.yml build telegram-bot
-          echo "${{ secrets.DOCKER_PASS }}" | docker login -u ${{ secrets.DOCKER_USER }} --password-stdin
+          echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u ${{ secrets.DOCKER_USER }} --password-stdin
           docker-compose -f docker-compose.yml push telegram-bot
 
       - name: Create .env file in project
@@ -59,6 +59,6 @@ jobs:
             docker login -u ${{ secrets.DOCKER_USER }} --password-stdin <<< "${{ secrets.DOCKER_PASSWORD }}"
             cd ~/kurin-bot/telegram-bot/
             git pull
-            docker-compose -f docker-compose.yml pull
-            docker-compose -f docker-compose.yml down
-            docker-compose -f docker-compose.yml up -d 
+            docker compose -f docker-compose.yml pull
+            docker compose -f docker-compose.yml down
+            docker compose -f docker-compose.yml up -d 
