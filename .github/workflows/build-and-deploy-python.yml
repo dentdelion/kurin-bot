@@ -74,7 +74,7 @@ jobs:
             echo "ADMIN_IDS=${{ secrets.ADMIN_IDS }}" >> .env  
             echo "GOOGLE_SHEETS_URL=${{ vars.GOOGLE_SHEETS_URL }}" >> .env
             echo "GOOGLE_SHEET_NAME=${{ vars.GOOGLE_SHEET_NAME }}" >> .env
-            echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' >> .env
+            echo "GOOGLE_CREDENTIALS_JSON='${{ secrets.GOOGLE_CREDENTIALS_JSON }}'" >> .env
 
       - name: Deploy to server
         # Only deploy on main branch
