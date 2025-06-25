@@ -32,6 +32,12 @@ jobs:
       - name: Build and Push Docker Compose Services
         # Only build and push on main branch to avoid conflicts
         if: github.ref == 'refs/heads/main'
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
+          GOOGLE_SHEETS_URL: ${{ env.GOOGLE_SHEETS_URL }}
+          GOOGLE_SHEET_NAME: ${{ env.GOOGLE_SHEET_NAME }}
         run: |
           cd telegram-bot
           docker compose -f docker-compose.yml build telegram-bot
