@@ -1,15 +1,41 @@
 version: '3.8'
 
 services:
+  mysql:
+    image: mysql:8.0
+    container_name: kurin-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-kurin_bot}
+      MYSQL_USER: ${MYSQL_USER:-kurin_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-kurinpassword}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    networks:
+      - bot-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
   telegram-bot:
     build: .
     image: lancea18/kurin-bot:latest
     container_name: kurin-telegram-bot
     restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
     environment:
       # Bot configuration
       - BOT_TOKEN=${BOT_TOKEN}
       - ADMIN_IDS=${ADMIN_IDS}
+      
+      # Database configuration
+      - DATABASE_URL=mysql+pymysql://${MYSQL_USER:-kurin_user}:${MYSQL_PASSWORD:-kurinpassword}@mysql:3306/${MYSQL_DATABASE:-kurin_bot}
       
       # Google Sheets configuration
       - GOOGLE_SHEETS_URL=${GOOGLE_SHEETS_URL}
@@ -30,6 +56,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+volumes:
+  mysql_data:
 
 networks:
   bot-network:

@@ -50,17 +50,6 @@ def setup_environment():
         print(f"❌ {env_example} not found")
         return False
 
-def create_sample_data():
-    """Create sample Excel file"""
-    try:
-        from create_sample_excel import create_sample_excel
-        create_sample_excel()
-        print("✅ Sample Excel file created")
-        return True
-    except Exception as e:
-        print(f"❌ Error creating sample Excel file: {e}")
-        return False
-
 def show_next_steps():
     """Show next steps to the user"""
     print("\n" + "="*50)
@@ -95,10 +84,6 @@ def main():
     
     # Setup environment
     if not setup_environment():
-        return False
-    
-    # Create sample data
-    if not create_sample_data():
         return False
     
     # Show next steps

@@ -70,12 +70,32 @@ jobs:
           script: |
             cd ~/kurin-bot/telegram-bot/
             
-            # Create .env file (without the problematic JSON)
-            echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
-            echo "ADMIN_IDS=${{ vars.ADMIN_IDS }}" >> .env  
+            # Create .env file with all necessary variables
+            echo "# Bot configuration" > .env
+            echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" >> .env
+            echo "ADMIN_IDS=${{ vars.ADMIN_IDS }}" >> .env
+            echo "" >> .env
+            
+            # Database configuration
+            echo "# Database configuration" >> .env
+            echo "DATABASE_URL=mysql+pymysql://${{ vars.MYSQL_USER }}:${{ secrets.MYSQL_PASSWORD }}@mysql:3306/${{ vars.MYSQL_DATABASE }}" >> .env
+            echo "MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}" >> .env
+            echo "MYSQL_DATABASE=${{ vars.MYSQL_DATABASE }}" >> .env
+            echo "MYSQL_USER=${{ vars.MYSQL_USER }}" >> .env
+            echo "MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}" >> .env
+            echo "" >> .env
+            
+            # Google Sheets configuration
+            echo "# Google Sheets configuration" >> .env
             echo "GOOGLE_SHEETS_URL=${{ vars.GOOGLE_SHEETS_URL }}" >> .env
             echo "GOOGLE_SHEET_NAME=${{ vars.GOOGLE_SHEET_NAME }}" >> .env
             echo "GOOGLE_CREDENTIALS_FILE=/app/credentials/credentials.json" >> .env
+            echo "" >> .env
+            
+            # Bot settings
+            echo "# Bot settings" >> .env
+            echo "ALLOWED_TIME_TO_READ_THE_BOOK=${{ vars.ALLOWED_TIME_TO_READ_THE_BOOK }}" >> .env
+            echo "RULES_TEXT=${{ vars.RULES_TEXT }}" >> .env
             
             # Create credentials directory if it doesn't exist
             mkdir -p credentials
@@ -88,7 +108,7 @@ jobs:
             # Verify the JSON is valid
             python3 -m json.tool credentials/credentials.json > /dev/null && echo "✅ JSON credentials are valid" || echo "❌ JSON credentials are invalid"
 
-      - name: Deploy to server
+      - name: Deploy to server with database
         # Only deploy on main branch
         if: github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@master
@@ -102,6 +122,32 @@ jobs:
             cd ~/kurin-bot
             git pull
             cd telegram-bot
+            
+            # Pull latest images
             docker compose -f docker-compose.yml pull
+            
+            # Stop existing services
             docker compose -f docker-compose.yml down
-            docker compose -f docker-compose.yml up -d 
+            
+            # Remove any existing database containers and volumes if this is a fresh deployment
+            # Uncomment the next line only for complete reset (WILL DELETE ALL DATA!)
+            # docker compose -f docker-compose.yml down -v
+            
+            # Start services (MySQL first, then bot with automatic migration)
+            echo "🚀 Starting services with database migration..."
+            docker compose -f docker-compose.yml up -d
+            
+            # Wait a moment for startup
+            sleep 10
+            
+            # Check if services are running
+            echo "📊 Service status:"
+            docker compose -f docker-compose.yml ps
+            
+            # Check bot logs for successful migration
+            echo "🔍 Checking bot startup logs..."
+            docker compose -f docker-compose.yml logs telegram-bot --tail=50
+            
+            # Check database connection
+            echo "🔍 Checking database status..."
+            docker compose -f docker-compose.yml logs mysql --tail=20 

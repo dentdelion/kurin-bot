@@ -11,85 +11,100 @@ logger = logging.getLogger(__name__)
 class GoogleSheetsManager:
     def __init__(self):
         self.gc = None
-        self.sheet = None
         self.worksheet = None
         self._authenticate()
+        self._open_sheet()
         
     def _authenticate(self):
         """Authenticate with Google Sheets API"""
         try:
             self.gc = gspread.service_account(filename=config.GOOGLE_CREDENTIALS_FILE)
-            logger.info("Successfully authenticated with Google Sheets using service account")
-            self._open_sheet()
+            logger.info("Successfully authenticated with Google Sheets")
+        except FileNotFoundError:
+            logger.error(f"Google credentials file not found: {config.GOOGLE_CREDENTIALS_FILE}")
+            raise
+        except GoogleAuthError as e:
+            logger.error(f"Google authentication failed: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Failed to authenticate with Google Sheets: {e}")
-            raise RuntimeError(f"Google Sheets authentication failed: {e}")
+            logger.error(f"Unexpected error during Google Sheets authentication: {e}")
+            raise
     
     def _open_sheet(self):
-        """Open the Google Sheet"""
-        if not config.GOOGLE_SHEETS_URL:
-            raise ValueError("GOOGLE_SHEETS_URL not configured in environment variables")
-        
+        """Open the specified Google Sheet"""
         try:
+            if not config.GOOGLE_SHEETS_URL:
+                raise ValueError("GOOGLE_SHEETS_URL is not configured")
+            
             # Extract sheet ID from URL
             sheet_id = self._extract_sheet_id(config.GOOGLE_SHEETS_URL)
-            self.sheet = self.gc.open_by_key(sheet_id)
+            logger.info(f"Extracted sheet ID: {sheet_id}")
+            
+            # Open sheet by ID
+            sheet = self.gc.open_by_key(sheet_id)
+            
+            # Get worksheet by name
+            self.worksheet = sheet.worksheet(config.GOOGLE_SHEET_NAME)
+            logger.info(f"Successfully opened worksheet: {config.GOOGLE_SHEET_NAME}")
+            
+        except gspread.exceptions.WorksheetNotFound:
+            logger.error(f"Worksheet '{config.GOOGLE_SHEET_NAME}' not found in the sheet")
+            raise
+        except gspread.exceptions.SpreadsheetNotFound:
+            logger.error(f"Spreadsheet not found or access denied: {config.GOOGLE_SHEETS_URL}")
+            raise
         except Exception as e:
             logger.error(f"Failed to open Google Sheet: {e}")
-            raise RuntimeError(f"Cannot access Google Sheet: {e}")
-        
-        # Get the specific worksheet
-        try:
-            self.worksheet = self.sheet.worksheet(config.GOOGLE_SHEET_NAME)
-            logger.info(f"Successfully opened worksheet '{config.GOOGLE_SHEET_NAME}' in Google Sheet: {self.sheet.title}")
-        except gspread.WorksheetNotFound:
-            try:
-                self.worksheet = self.sheet.get_worksheet(0)
-                logger.warning(f"Worksheet '{config.GOOGLE_SHEET_NAME}' not found. Using first worksheet: {self.worksheet.title}")
-            except Exception as e:
-                logger.error(f"No accessible worksheets found: {e}")
-                raise RuntimeError(f"Cannot access any worksheet in Google Sheet: {e}")
+            raise
     
     def _extract_sheet_id(self, url):
         """Extract sheet ID from Google Sheets URL"""
-        # Google Sheets URL pattern: https://docs.google.com/spreadsheets/d/{SHEET_ID}/...
-        match = re.search(r'/spreadsheets/d/([a-zA-Z0-9-_]+)', url)
-        if match:
-            return match.group(1)
-        else:
-            raise ValueError(f"Invalid Google Sheets URL format: {url}")
+        try:
+            if '/d/' in url:
+                return url.split('/d/')[1].split('/')[0]
+            else:
+                raise ValueError("Invalid Google Sheets URL format")
+        except Exception as e:
+            logger.error(f"Failed to extract sheet ID from URL: {e}")
+            raise
     
     def read_books(self):
-        """Read all books from Google Sheet"""
+        """Read all books from the sheet"""
         try:
-            # Get all records as a list of dictionaries
+            # Get all records
             records = self.worksheet.get_all_records()
-            df = pd.DataFrame(records)
             
-            # Handle empty sheet
-            if df.empty:
-                logger.warning("Google Sheet is empty - no book data found")
+            if not records:
+                logger.warning("No data found in the sheet")
                 return pd.DataFrame()
             
-            # Validate required columns exist
+            # Convert to DataFrame
+            df = pd.DataFrame(records)
+            
+            # Ensure all required columns exist
             required_columns = list(config.EXCEL_COLUMNS.values())
             missing_columns = [col for col in required_columns if col not in df.columns]
-            if missing_columns:
-                raise ValueError(f"Missing required columns in Google Sheet: {missing_columns}")
             
+            if missing_columns:
+                logger.error(f"Missing required columns: {missing_columns}")
+                raise ValueError(f"Missing columns in Google Sheet: {missing_columns}")
+            
+            logger.info(f"Successfully read {len(df)} books from sheet")
             return df
+            
         except Exception as e:
-            logger.error(f"Failed to read data from Google Sheet: {e}")
-            raise RuntimeError(f"Cannot read Google Sheet data: {e}")
+            logger.error(f"Failed to read books: {e}")
+            raise
     
     def get_books_by_category(self, category, page=0):
         """Get books filtered by category with pagination"""
         df = self.read_books()
+        
         if df.empty:
             return [], 0
             
-        # Filter books by category
-        if category != 'all':
+        # Filter by category if not "all"
+        if category.lower() != 'all':
             mask = df[config.EXCEL_COLUMNS['categories']].astype(str).str.contains(category, case=False, na=False)
             filtered_df = df[mask]
         else:
@@ -100,12 +115,14 @@ class GoogleSheetsManager:
         # Apply pagination
         start_idx = page * config.BOOKS_PER_PAGE
         end_idx = start_idx + config.BOOKS_PER_PAGE
-        page_books = filtered_df.iloc[start_idx:end_idx]
+        page_df = filtered_df.iloc[start_idx:end_idx]
         
+        # Convert to list of dictionaries
         books = []
-        for idx, row in page_books.iterrows():
+        for idx, row in page_df.iterrows():
             book_info = {
                 'index': idx,
+                'id': row[config.EXCEL_COLUMNS['id']],
                 'name': row[config.EXCEL_COLUMNS['name']],
                 'author': row[config.EXCEL_COLUMNS['author']],
                 'edition': row[config.EXCEL_COLUMNS['edition']],
@@ -113,7 +130,7 @@ class GoogleSheetsManager:
                 'description': row[config.EXCEL_COLUMNS['description']],
                 'booked_until': row[config.EXCEL_COLUMNS['booked_until']],
                 'categories': row[config.EXCEL_COLUMNS['categories']],
-                'in_queue_for_delivery': row[config.EXCEL_COLUMNS['in_queue_for_delivery']],
+                'status': row[config.EXCEL_COLUMNS['status']],
                 'is_available': self._is_book_available(row)
             }
             books.append(book_info)
@@ -123,22 +140,26 @@ class GoogleSheetsManager:
     def _is_book_available(self, row):
         """Check if book is available for booking"""
         booked_until = row[config.EXCEL_COLUMNS['booked_until']]
-        in_queue = row[config.EXCEL_COLUMNS['in_queue_for_delivery']]
+        status = row[config.EXCEL_COLUMNS['status']]
         
-        # Book is available if booked_until is empty/null and not in delivery queue
-        return (pd.isna(booked_until) or str(booked_until).strip() == '') and (pd.isna(in_queue) or str(in_queue).lower() != 'yes')
+        # Book is available if booked_until is empty and status is empty
+        return ((pd.isna(booked_until) or str(booked_until).strip() == '') and 
+                (pd.isna(status) or str(status).strip() == ''))
     
     def book_item(self, book_index, user_id, user_name):
-        """Mark book as in queue for delivery"""
+        """Mark book as booked with yellow highlighting"""
         try:
             # Convert book_index to row number (adding 2 for header and 1-indexing)
             row_num = book_index + 2
             
-            # Get column index for 'in_queue_for_delivery'
-            col_index = self._get_column_index(config.EXCEL_COLUMNS['in_queue_for_delivery'])
+            # Get column index for 'status'
+            col_index = self._get_column_index(config.EXCEL_COLUMNS['status'])
             
-            # Update the cell
-            self.worksheet.update_cell(row_num, col_index, 'yes')
+            # Update the status cell to 'booked'
+            self.worksheet.update_cell(row_num, col_index, config.STATUS_VALUES['BOOKED'])
+            
+            # Color the entire row yellow
+            self._color_row(row_num, '#FFFF00')
             
             logger.info(f"Book at row {book_index} booked by user {user_id} ({user_name})")
             return True
@@ -147,12 +168,12 @@ class GoogleSheetsManager:
             raise RuntimeError(f"Cannot update Google Sheet: {e}")
     
     def get_books_for_delivery(self):
-        """Get books that need to be delivered"""
+        """Get books that are booked and need to be delivered"""
         df = self.read_books()
         if df.empty:
             return []
             
-        mask = df[config.EXCEL_COLUMNS['in_queue_for_delivery']].astype(str).str.lower() == 'yes'
+        mask = df[config.EXCEL_COLUMNS['status']].astype(str).str.lower() == config.STATUS_VALUES['BOOKED']
         delivery_books = df[mask]
         
         books = []
@@ -168,13 +189,14 @@ class GoogleSheetsManager:
         return books
     
     def mark_as_delivered(self, book_index):
-        """Mark book as delivered (put on shelf)"""
+        """Mark book as delivered (ready for pickup)"""
         try:
             row_num = book_index + 2
-            col_index = self._get_column_index(config.EXCEL_COLUMNS['in_queue_for_delivery'])
+            col_index = self._get_column_index(config.EXCEL_COLUMNS['status'])
             
-            self.worksheet.update_cell(row_num, col_index, 'delivered')
-            logger.info(f"Book at row {book_index} marked as delivered")
+            # Keep status as 'booked' but book is now ready for pickup
+            # The row remains yellow until user picks it up
+            logger.info(f"Book at row {book_index} marked as delivered and ready for pickup")
             return True
         except Exception as e:
             logger.error(f"Failed to mark book as delivered: {e}")
@@ -187,17 +209,14 @@ class GoogleSheetsManager:
             
             # Get column indices
             booked_until_col = self._get_column_index(config.EXCEL_COLUMNS['booked_until'])
-            in_queue_col = self._get_column_index(config.EXCEL_COLUMNS['in_queue_for_delivery'])
             
             # Set due date
             due_date = datetime.now() + timedelta(days=config.ALLOWED_TIME_TO_READ_THE_BOOK)
             
-            # Update cells
+            # Update due date
             self.worksheet.update_cell(row_num, booked_until_col, due_date.strftime('%Y-%m-%d'))
-            self.worksheet.update_cell(row_num, in_queue_col, 'no')
             
-            # Add background color (yellow) to the entire row
-            self._color_row(row_num, '#FFFF00')
+            # Status remains 'booked', row remains yellow
             
             logger.info(f"Book at row {book_index} marked as picked up by user {user_id}")
             return True
@@ -205,28 +224,67 @@ class GoogleSheetsManager:
             logger.error(f"Failed to mark book as picked up: {e}")
             raise RuntimeError(f"Cannot update Google Sheet: {e}")
     
-    def mark_as_returned(self, book_index):
-        """Mark book as returned and clear booking"""
+    def mark_as_returned_by_user(self, book_index):
+        """Mark book as returned by user (waiting for admin confirmation)"""
+        try:
+            row_num = book_index + 2
+            
+            # Get column index for status
+            status_col = self._get_column_index(config.EXCEL_COLUMNS['status'])
+            
+            # Update status to 'returned' but keep row yellow
+            self.worksheet.update_cell(row_num, status_col, config.STATUS_VALUES['RETURNED'])
+            
+            logger.info(f"Book at row {book_index} marked as returned by user")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to mark book as returned by user: {e}")
+            raise RuntimeError(f"Cannot update Google Sheet: {e}")
+    
+    def confirm_book_return(self, book_index):
+        """Admin confirms book return - clear status and color"""
         try:
             row_num = book_index + 2
             
             # Get column indices
             booked_until_col = self._get_column_index(config.EXCEL_COLUMNS['booked_until'])
-            in_queue_col = self._get_column_index(config.EXCEL_COLUMNS['in_queue_for_delivery'])
+            status_col = self._get_column_index(config.EXCEL_COLUMNS['status'])
             
             # Clear values
             self.worksheet.update_cell(row_num, booked_until_col, '')
-            self.worksheet.update_cell(row_num, in_queue_col, 'no')
+            self.worksheet.update_cell(row_num, status_col, config.STATUS_VALUES['EMPTY'])
             
             # Clear background color
             self._clear_row_color(row_num)
             
-            logger.info(f"Book at row {book_index} marked as returned")
+            logger.info(f"Book at row {book_index} return confirmed - status and color cleared")
             return True
         except Exception as e:
-            logger.error(f"Failed to mark book as returned: {e}")
+            logger.error(f"Failed to confirm book return: {e}")
             raise RuntimeError(f"Cannot update Google Sheet: {e}")
     
+    def get_returned_books_pending_confirmation(self):
+        """Get books that are returned but waiting for admin confirmation"""
+        df = self.read_books()
+        if df.empty:
+            return []
+            
+        mask = df[config.EXCEL_COLUMNS['status']].astype(str).str.lower() == config.STATUS_VALUES['RETURNED']
+        returned_books = df[mask]
+        
+        books = []
+        for idx, row in returned_books.iterrows():
+            book_info = {
+                'index': idx,
+                'name': row[config.EXCEL_COLUMNS['name']],
+                'author': row[config.EXCEL_COLUMNS['author']],
+                'edition': row[config.EXCEL_COLUMNS['edition']],
+                'booked_until': row[config.EXCEL_COLUMNS['booked_until']]
+            }
+            books.append(book_info)
+            
+        return books
+
     def _get_column_index(self, column_name):
         """Get column index by name"""
         try:
@@ -313,6 +371,7 @@ class GoogleSheetsManager:
         row = df.iloc[book_index]
         return {
             'index': book_index,
+            'id': row[config.EXCEL_COLUMNS['id']],
             'name': row[config.EXCEL_COLUMNS['name']],
             'author': row[config.EXCEL_COLUMNS['author']],
             'edition': row[config.EXCEL_COLUMNS['edition']],
@@ -320,6 +379,6 @@ class GoogleSheetsManager:
             'description': row[config.EXCEL_COLUMNS['description']],
             'booked_until': row[config.EXCEL_COLUMNS['booked_until']],
             'categories': row[config.EXCEL_COLUMNS['categories']],
-            'in_queue_for_delivery': row[config.EXCEL_COLUMNS['in_queue_for_delivery']],
+            'status': row[config.EXCEL_COLUMNS['status']],
             'is_available': self._is_book_available(row)
         } 

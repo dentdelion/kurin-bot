@@ -3,6 +3,8 @@ import asyncio
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from telegram.error import TelegramError
+from datetime import datetime
+import pandas as pd
 
 import config
 from google_sheets_manager import GoogleSheetsManager
@@ -118,8 +120,8 @@ class LibraryBot:
         
         # For now, just acknowledge receipt
         await update.message.reply_text(
-            "📷 Фото отримано! Адміністратори будуть повідомлені про повернення книги.",
-            reply_markup=keyboards.get_return_confirmation_keyboard()
+            "📷 Фото отримано! Адміністраторів повідомлено про повернення книги.\n\n"
+            "Перейдіть до 'Мої книги' щоб підтвердити повернення."
         )
     
     async def handle_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -181,12 +183,77 @@ class LibraryBot:
     async def _handle_my_books(self, query):
         """Handle my books callback"""
         user_id = query.from_user.id
-        # This would show user's current books
-        await query.edit_message_text(
-            "📖 Ваші книги:\n\n"
-            "Тут будуть показані ваші поточні книги...",
-            reply_markup=keyboards.get_user_book_actions_keyboard()
-        )
+        
+        try:
+            active_books = self.user_manager.get_user_active_books(user_id)
+            
+            if active_books:
+                text = "📖 <b>Ваші активні книги:</b>\n\n"
+                
+                # Check if any books are ready for pickup by looking at Google Sheets status
+                ready_for_pickup = []
+                for book in active_books:
+                    book_id = book['book_id']
+                    book_name = self._get_book_name_by_id(book_id)
+                    if not book_name:
+                        book_name = f"Книга ID: {book_id}"
+                    
+                    # Check if book has due date set (means it's been picked up)
+                    has_due_date = book['expiry_date'] and book['date_booked']
+                    days_since_booking = (datetime.now() - book['date_booked']).days
+                    
+                    # If book was booked recently and no due date properly set, it might be ready for pickup
+                    book_status = ""
+                    if book['days_left'] <= 0:
+                        book_status = "⏰ Прострочено"
+                    elif days_since_booking <= 2 and book['expiry_date']:
+                        # Check if book is delivered but not picked up
+                        try:
+                            df = self.sheets_manager.read_books()
+                            book_row = df[df[config.EXCEL_COLUMNS['id']].astype(str) == str(book_id)]
+                            if not book_row.empty:
+                                row = book_row.iloc[0]
+                                booked_until = row[config.EXCEL_COLUMNS['booked_until']]
+                                status = row[config.EXCEL_COLUMNS['status']]
+                                
+                                # If status is 'booked' but no due date, book is ready for pickup
+                                if (str(status).lower() == config.STATUS_VALUES['BOOKED'] and 
+                                    (pd.isna(booked_until) or str(booked_until).strip() == '')):
+                                    book_status = "📦 Готова до отримання!"
+                                    ready_for_pickup.append(book_id)
+                                else:
+                                    book_status = f"📅 Залишилось днів: {book['days_left']}"
+                            else:
+                                book_status = f"📅 Залишилось днів: {book['days_left']}"
+                        except Exception as e:
+                            logger.error(f"Error checking book status for {book_id}: {e}")
+                            book_status = f"📅 Залишилось днів: {book['days_left']}"
+                    else:
+                        book_status = f"📅 Залишилось днів: {book['days_left']}"
+                    
+                    text += f"📚 <b>{book_name}</b>\n"
+                    text += f"🗓 Заброньовано: {book['date_booked'].strftime('%d.%m.%Y')}\n"
+                    text += f"📅 Повернути до: {book['expiry_date'].strftime('%d.%m.%Y')}\n"
+                    text += f"{book_status}\n\n"
+                
+                # Add special message if books are ready for pickup
+                if ready_for_pickup:
+                    text += "💡 <b>Увага:</b> У вас є книги готові до отримання! Натисніть '✅ Забрав книгу' після того, як заберете їх з полиці.\n\n"
+                    
+            else:
+                text = "📖 <b>Ваші книги</b>\n\n У вас немає активних книг"
+            
+            await query.edit_message_text(
+                text,
+                reply_markup=keyboards.get_user_book_actions_keyboard(),
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logger.error(f"Error getting user books: {e}")
+            await query.edit_message_text(
+                "❌ Помилка отримання інформації про ваші книги",
+                reply_markup=keyboards.get_user_book_actions_keyboard()
+            )
     
     async def _handle_back_to_main(self, query):
         """Handle back to main menu"""
@@ -202,9 +269,6 @@ class LibraryBot:
         """Handle category selection"""
         category = data.replace("category_", "")
         user_id = query.from_user.id
-        
-        # Update user's current category
-        self.user_manager.update_user_category(user_id, category)
         
         # Get books for this category
         books, total_books = self.sheets_manager.get_books_by_category(category, page=0)
@@ -235,7 +299,6 @@ class LibraryBot:
         page = int(parts[3])
         
         user_id = query.from_user.id
-        self.user_manager.update_user_page(user_id, page)
         
         books, total_books = self.sheets_manager.get_books_by_category(category, page)
         books_text = self._format_books_list(books, category, page, total_books)
@@ -320,8 +383,9 @@ class LibraryBot:
         try:
             self.sheets_manager.book_item(book_index, user_id, user_name)
             
-            # Add to user history
-            self.user_manager.add_book_to_history(user_id, book_index, "booked")
+            # Add to database statistics using book_id instead of book_name
+            book_id = book['id']  # Use the book ID from the sheet
+            self.user_manager.add_book_to_statistics(user_id, book_id)
             
             # Send notifications to admins - get user info safely
             book_info = {
@@ -367,77 +431,365 @@ class LibraryBot:
         
         try:
             if data == "admin_panel":
-                await query.edit_message_text(
-                    "🔧 Адміністративна панель",
-                    reply_markup=keyboards.get_admin_panel_keyboard()
-                )
+                await self._handle_admin_panel(query)
             elif data == "admin_delivery_queue":
-                books = self.sheets_manager.get_books_for_delivery()
-                logger.info(f"Admin {user_id} requested delivery queue, found {len(books)} books")
-                
-                if books:
-                    await query.edit_message_text(
-                        f"📦 Книги до доставки ({len(books)}):",
-                        reply_markup=keyboards.get_delivery_books_keyboard(books)
-                    )
-                else:
-                    # Show debug information if no books are found
-                    try:
-                        # Try to read all books and see how many have in_queue_for_delivery = 'yes'
-                        df = self.sheets_manager.read_books()
-                        if not df.empty:
-                            total_books = len(df)
-                            in_queue_count = len(df[df[config.EXCEL_COLUMNS['in_queue_for_delivery']].astype(str).str.lower() == 'yes'])
-                            debug_text = (
-                                f"📦 Немає книг для доставки\n\n"
-                                f"🔍 Відладочна інформація:\n"
-                                f"Всього книг в таблиці: {total_books}\n"
-                                f"Книг з 'In queue for delivery' = 'yes': {in_queue_count}\n\n"
-                                f"Перевірте, чи є книги з позначкою 'yes' в колонці 'In queue for delivery'"
-                            )
-                        else:
-                            debug_text = "📦 Немає книг для доставки\n\n❌ Не вдалося прочитати дані з таблиці"
-                    except Exception as debug_e:
-                        logger.error(f"Debug info error: {debug_e}")
-                        debug_text = f"📦 Немає книг для доставки\n\n❌ Помилка отримання відладочної інформації: {debug_e}"
-                    
-                    await query.edit_message_text(
-                        debug_text,
-                        reply_markup=keyboards.get_admin_panel_keyboard()
-                    )
+                await self._handle_admin_delivery_queue(query)
+            elif data == "admin_mark_delivered":
+                await self._handle_admin_mark_delivered(query)
+            elif data == "admin_confirm_returns":
+                await self._handle_admin_confirm_returns(query)
+            elif data == "admin_statistics":
+                await self._handle_admin_statistics(query)
             elif data.startswith("admin_deliver_"):
-                book_index = int(data.replace("admin_deliver_", ""))
-                book = self.sheets_manager.get_book_by_index(book_index)
-                if book:
-                    await query.edit_message_text(
-                        f"📚 {book['name']}\n👤 {book['author']}\n\nПідтвердити доставку на полицю?",
-                        reply_markup=keyboards.get_admin_delivery_actions_keyboard(book_index)
-                    )
+                await self._handle_admin_deliver_book(query, data)
             elif data.startswith("admin_delivered_"):
-                book_index = int(data.replace("admin_delivered_", ""))
-                try:
-                    self.sheets_manager.mark_as_delivered(book_index)
-                    book = self.sheets_manager.get_book_by_index(book_index)
-                    # Here we would notify the user who booked the book
-                    await query.edit_message_text("✅ Книга позначена як доставлена на полицю!")
-                except Exception as e:
-                    logger.error(f"Failed to mark book as delivered: {e}")
-                    await query.edit_message_text("❌ Помилка при позначенні книги як доставленої.")
+                await self._handle_admin_book_delivered(query, data)
+            elif data.startswith("admin_confirm_return_"):
+                await self._handle_admin_confirm_return(query, data)
+            elif data.startswith("admin_confirmed_return_"):
+                await self._handle_admin_confirmed_return(query, data)
         except Exception as e:
             logger.error(f"Error in admin callback {data}: {e}")
             await query.edit_message_text(
-                "❌ Виникла помилка при роботі з Google Sheets. "
+                "❌ Виникла помилка при роботі з базою даних. "
                 "Перевірте підключення та спробуйте пізніше."
             )
+    
+    async def _handle_admin_panel(self, query):
+        """Handle admin panel main menu"""
+        await query.edit_message_text(
+            "🔧 Адміністративна панель",
+            reply_markup=keyboards.get_admin_panel_keyboard()
+        )
+    
+    async def _handle_admin_delivery_queue(self, query):
+        """Handle admin delivery queue request"""
+        user_id = query.from_user.id
+        books = self.sheets_manager.get_books_for_delivery()
+        logger.info(f"Admin {user_id} requested delivery queue, found {len(books)} books")
+        
+        if books:
+            await query.edit_message_text(
+                f"📦 Книги до доставки ({len(books)}):",
+                reply_markup=keyboards.get_delivery_books_keyboard(books)
+            )
+        else:
+            # Show debug information if no books are found
+            debug_text = await self._get_delivery_debug_info("📦 Немає книг для доставки")
+            await query.edit_message_text(
+                debug_text,
+                reply_markup=keyboards.get_admin_panel_keyboard()
+            )
+    
+    async def _handle_admin_mark_delivered(self, query):
+        """Handle admin mark delivered request"""
+        user_id = query.from_user.id
+        books = self.sheets_manager.get_books_for_delivery()
+        logger.info(f"Admin {user_id} requested mark delivered, found {len(books)} books")
+        
+        if books:
+            await query.edit_message_text(
+                f"📚 Оберіть книгу для позначення як доставлена ({len(books)}):",
+                reply_markup=keyboards.get_delivery_books_keyboard(books)
+            )
+        else:
+            # Show debug information if no books are found
+            debug_text = await self._get_delivery_debug_info("📚 Немає книг для позначення як доставлено")
+            await query.edit_message_text(
+                debug_text,
+                reply_markup=keyboards.get_admin_panel_keyboard()
+            )
+    
+    async def _handle_admin_deliver_book(self, query, data):
+        """Handle admin book delivery confirmation request"""
+        book_index = int(data.replace("admin_deliver_", ""))
+        book = self.sheets_manager.get_book_by_index(book_index)
+        
+        if book:
+            await query.edit_message_text(
+                f"📚 {book['name']}\n👤 {book['author']}\n\nПідтвердити доставку на полицю?",
+                reply_markup=keyboards.get_admin_delivery_actions_keyboard(book_index)
+            )
+        else:
+            await query.edit_message_text("❌ Книга не знайдена.")
+    
+    async def _handle_admin_book_delivered(self, query, data):
+        """Handle admin book delivered confirmation"""
+        book_index = int(data.replace("admin_delivered_", ""))
+        
+        try:
+            # Get book info before marking as delivered
+            book = self.sheets_manager.get_book_by_index(book_index)
+            if not book:
+                await query.edit_message_text("❌ Книга не знайдена.")
+                return
+            
+            logger.info(f"Admin marking book as delivered: index={book_index}, book_id={book['id']}, name={book['name']}")
+            
+            # Mark as delivered in sheets
+            self.sheets_manager.mark_as_delivered(book_index)
+            
+            # Find the user who booked this book
+            book_id = book['id']
+            logger.info(f"Looking for user with active book_id: {book_id}")
+            user_info = self.user_manager.get_user_with_active_book(book_id)
+            
+            if user_info:
+                logger.info(f"Found user for book delivery: user_id={user_info['user_id']}, user_name={user_info['user_name']}")
+                
+                # Prepare book info for notification
+                book_info = {
+                    'name': book['name'],
+                    'author': book['author']
+                }
+                
+                # Send notification to user
+                try:
+                    await self.notification_manager.notify_user_book_ready(user_info['user_id'], book_info)
+                    logger.info(f"✅ Successfully sent book ready notification to user {user_info['user_id']} for book {book['name']}")
+                except Exception as notify_error:
+                    logger.error(f"❌ Failed to send notification to user {user_info['user_id']}: {notify_error}")
+                    # Continue with the admin response even if notification fails
+                
+                await query.edit_message_text(
+                    f"✅ Книга позначена як доставлена на полицю!\n\n"
+                    f"📚 {book['name']}\n"
+                    f"👤 Користувача {user_info['user_name']} повідомлено про готовність книги."
+                )
+            else:
+                logger.warning(f"❌ No active booking found for book_id: {book_id}, book_name: {book['name']}")
+                
+                # Let's also check all active bookings to help debug
+                try:
+                    # Debug: Check what active bookings exist
+                    debug_info = []
+                    with self.user_manager.db_manager.get_session() as session:
+                        from database import UserStatistics, User
+                        active_bookings = session.query(UserStatistics, User).join(User).filter(
+                            UserStatistics.returned == False
+                        ).all()
+                        
+                        for stat, user in active_bookings:
+                            debug_info.append(f"user_id={user.telegram_id}, book_id={stat.book_id}")
+                    
+                    logger.info(f"Current active bookings: {debug_info}")
+                except Exception as debug_e:
+                    logger.error(f"Error getting debug info: {debug_e}")
+                
+                # No active booking found
+                await query.edit_message_text(
+                    f"✅ Книга позначена як доставлена на полицю!\n\n"
+                    f"📚 {book['name']}\n"
+                    f"⚠️ Не знайдено активного бронювання для цієї книги.\n"
+                    f"Book ID: {book_id} (перевірте логи для деталей)"
+                )
+                
+        except Exception as e:
+            logger.error(f"Failed to mark book as delivered: {e}")
+            await query.edit_message_text("❌ Помилка при позначенні книги як доставленої.")
+    
+    async def _handle_admin_statistics(self, query):
+        """Handle admin statistics request"""
+        try:
+            top_books = self.user_manager.get_top_books_last_month(10)
+            
+            if top_books:
+                text = "📊 <b>Топ-10 найменш популярних книг за останній місяць</b>\n\n"
+                for i, book in enumerate(top_books, 1):
+                    # Get book name from sheets using book_id
+                    book_name = self._get_book_name_by_id(book['book_id'])
+                    if not book_name:
+                        book_name = f"Книга ID: {book['book_id']}"
+                    
+                    text += f"{i}. <b>{book_name}</b>\n"
+                    text += f"   📈 Забронювань: {book['booking_count']}\n\n"
+            else:
+                text = "📊 <b>Статистика за останній місяць</b>\n\n❌ Немає даних про бронювання за останній місяць"
+            
+            await query.edit_message_text(
+                text,
+                reply_markup=keyboards.get_admin_panel_keyboard(),
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logger.error(f"Error getting admin statistics: {e}")
+            await query.edit_message_text(
+                "❌ Помилка отримання статистики",
+                reply_markup=keyboards.get_admin_panel_keyboard()
+            )
+    
+    async def _handle_admin_confirm_returns(self, query):
+        """Handle admin confirm returns request"""
+        user_id = query.from_user.id
+        books = self.sheets_manager.get_returned_books_pending_confirmation()
+        logger.info(f"Admin {user_id} requested returned books, found {len(books)} books")
+        
+        if books:
+            await query.edit_message_text(
+                f"🔄 Книги очікують підтвердження повернення ({len(books)}):",
+                reply_markup=keyboards.get_returned_books_keyboard(books)
+            )
+        else:
+            await query.edit_message_text(
+                "🔄 Немає книг, що очікують підтвердження повернення",
+                reply_markup=keyboards.get_admin_panel_keyboard()
+            )
+    
+    async def _handle_admin_confirm_return(self, query, data):
+        """Handle admin book return confirmation request"""
+        book_index = int(data.replace("admin_confirm_return_", ""))
+        book = self.sheets_manager.get_book_by_index(book_index)
+        
+        if book:
+            await query.edit_message_text(
+                f"📚 <b>{book['name']}</b>\n"
+                f"👤 <b>Автор:</b> {book['author']}\n"
+                f"📖 <b>Видавництво:</b> {book['edition']}\n"
+                f"📅 <b>Було заброньовано до:</b> {book['booked_until']}\n\n"
+                "Підтвердити повернення книги?\n"
+                "Це очистить статус і забарвлення рядка.",
+                reply_markup=keyboards.get_return_confirmation_keyboard(book_index),
+                parse_mode='HTML'
+            )
+        else:
+            await query.edit_message_text("❌ Книга не знайдена.")
+    
+    async def _handle_admin_confirmed_return(self, query, data):
+        """Handle admin book return confirmation"""
+        book_index = int(data.replace("admin_confirmed_return_", ""))
+        
+        try:
+            # Get book info before clearing
+            book = self.sheets_manager.get_book_by_index(book_index)
+            book_name = f"{book['name']} - {book['author']}" if book else "Unknown book"
+            
+            # Confirm return in sheets (clears status and color)
+            self.sheets_manager.confirm_book_return(book_index)
+            
+            # Also mark as returned in database if user exists
+            # Note: This requires enhancing to track which user had the book
+            # For now, we'll just log the return
+            logger.info(f"Book {book_index} ({book_name}) return confirmed by admin")
+            
+            await query.edit_message_text(
+                f"✅ Повернення книги підтверджено!\n\n"
+                f"📚 {book_name}\n\n"
+                "Статус очищено, забарвлення знято."
+            )
+        except Exception as e:
+            logger.error(f"Failed to confirm book return: {e}")
+            await query.edit_message_text("❌ Помилка при підтвердженні повернення книги.")
+    
+    async def _get_delivery_debug_info(self, base_message):
+        """Get debug information for delivery queue"""
+        try:
+            df = self.sheets_manager.read_books()
+            if not df.empty:
+                total_books = len(df)
+                booked_count = len(df[df[config.EXCEL_COLUMNS['status']].astype(str).str.lower() == config.STATUS_VALUES['BOOKED']])
+                debug_text = (
+                    f"{base_message}\n\n"
+                    f"🔍 Відладочна інформація:\n"
+                    f"Всього книг в таблиці: {total_books}\n"
+                    f"Книг зі статусом 'booked': {booked_count}\n\n"
+                    f"Перевірте, чи є книги зі статусом 'booked' в колонці 'Status'"
+                )
+            else:
+                debug_text = f"{base_message}\n\n❌ Не вдалося прочитати дані з таблиці"
+        except Exception as debug_e:
+            logger.error(f"Debug info error: {debug_e}")
+            debug_text = f"{base_message}\n\n❌ Помилка отримання відладочної інформації: {debug_e}"
+        
+        return debug_text
     
     async def _handle_user_picked_up(self, query):
         """Handle user picked up book"""
         user_id = query.from_user.id
-        # This would be enhanced to track which specific book was picked up
-        await query.edit_message_text(
-            "✅ Дякуємо! Книга позначена як забрана.\n"
-            "📅 Не забувайте повернути її вчасно!"
-        )
+        
+        try:
+            # Get user's active books
+            active_books = self.user_manager.get_user_active_books(user_id)
+            
+            if not active_books:
+                await query.edit_message_text(
+                    "❌ У вас немає активних книг для підтвердження отримання.",
+                    reply_markup=keyboards.get_user_book_actions_keyboard()
+                )
+                return
+            
+            # For now, handle the first active book (in future versions, let user choose)
+            book = active_books[0]
+            book_id = book['book_id']
+            
+            # Get book name for display
+            book_name = self._get_book_name_by_id(book_id)
+            if not book_name:
+                book_name = f"Книга ID: {book_id}"
+            
+            # Find the book in Google Sheets to mark as picked up
+            try:
+                # Get book index in sheets by book_id
+                df = self.sheets_manager.read_books()
+                book_row = df[df[config.EXCEL_COLUMNS['id']].astype(str) == str(book_id)]
+                
+                if not book_row.empty:
+                    book_index = book_row.index[0]
+                    
+                    # Mark as picked up in Google Sheets (set due date)
+                    self.sheets_manager.mark_as_picked_up(book_index, user_id)
+                    
+                    # Get user info for admin notification
+                    user_info = self.user_manager.get_user(user_id)
+                    user_display_info = {
+                        'name': self.user_manager.get_user_display_name(user_id),
+                        'phone': user_info.get('phone_number', 'не вказано') if user_info else 'не вказано'
+                    }
+                    
+                    # Prepare book info for admin notification
+                    book_info = {
+                        'name': book_name.split(' - ')[0] if ' - ' in book_name else book_name,
+                        'author': book_name.split(' - ')[1] if ' - ' in book_name else 'Невідомий автор',
+                        'due_date': book['expiry_date'].strftime('%d.%m.%Y')
+                    }
+                    
+                    # Notify admins about pickup
+                    await self.notification_manager.notify_admins_book_picked_up(book_info, user_display_info)
+                    
+                    logger.info(f"User {user_id} confirmed pickup of book {book_id} ({book_name})")
+                    
+                    await query.edit_message_text(
+                        f"✅ Дякуємо! Підтверджено отримання книги:\n\n"
+                        f"📚 <b>{book_name}</b>\n"
+                        f"📅 Повернути до: {book['expiry_date'].strftime('%d.%m.%Y')}\n\n"
+                        "Не забувайте повернути книгу вчасно!",
+                        parse_mode='HTML'
+                    )
+                else:
+                    logger.error(f"Could not find book {book_id} in Google Sheets for pickup confirmation")
+                    await query.edit_message_text(
+                        f"✅ Підтверджено отримання книги:\n\n"
+                        f"📚 <b>{book_name}</b>\n"
+                        f"📅 Повернути до: {book['expiry_date'].strftime('%d.%m.%Y')}\n\n"
+                        "⚠️ Помилка оновлення в таблиці. Зверніться до адміністратора.",
+                        parse_mode='HTML'
+                    )
+                    
+            except Exception as sheets_error:
+                logger.error(f"Error updating Google Sheets for pickup: {sheets_error}")
+                await query.edit_message_text(
+                    f"✅ Підтверджено отримання книги:\n\n"
+                    f"📚 <b>{book_name}</b>\n"
+                    f"📅 Повернути до: {book['expiry_date'].strftime('%d.%m.%Y')}\n\n"
+                    "⚠️ Помилка оновлення в таблиці. Зверніться до адміністратора.",
+                    parse_mode='HTML'
+                )
+        
+        except Exception as e:
+            logger.error(f"Error in user pickup confirmation: {e}")
+            await query.edit_message_text(
+                "❌ Помилка при підтвердженні отримання книги.",
+                reply_markup=keyboards.get_user_book_actions_keyboard()
+            )
     
     async def _handle_user_returned(self, query):
         """Handle user returned book"""
@@ -450,11 +802,47 @@ class LibraryBot:
         )
     
     async def _handle_confirm_return(self, query):
-        """Handle confirm book return"""
-        await query.edit_message_text(
-            "✅ Повернення підтверджено!\n"
-            "Адміністраторів повідомлено про необхідність забрати книгу."
-        )
+        """Handle user book return confirmation"""
+        user_id = query.from_user.id
+        
+        # In the new workflow, we need to:
+        # 1. Get the user's active book (for simplicity, assume they have one)
+        # 2. Mark it as 'returned' in the sheet (status = 'returned', row stays yellow)
+        # 3. Wait for admin confirmation
+        
+        try:
+            active_books = self.user_manager.get_user_active_books(user_id)
+            
+            if not active_books:
+                await query.edit_message_text(
+                    "❌ У вас немає активних книг для повернення.",
+                    reply_markup=keyboards.get_user_book_actions_keyboard()
+                )
+                return
+            
+            # For simplicity, handle the first active book
+            # In a full implementation, you'd let user choose which book to return
+            book = active_books[0]
+            
+            # This would need to be enhanced to find the book index in the sheet
+            # For now, we'll just mark it in the database
+            self.user_manager.mark_book_returned(user_id, book['book_id'])
+            
+            # Get book name for display
+            book_name = self._get_book_name_by_id(book['book_id'])
+            if not book_name:
+                book_name = f"Книга ID: {book['book_id']}"
+            
+            await query.edit_message_text(
+                f"✅ Повернення підтверджено!\n\n"
+                f"📚 {book_name}\n\n"
+                "Адміністраторів повідомлено про необхідність підтвердити повернення в системі."
+            )
+        except Exception as e:
+            logger.error(f"Error confirming return for user {user_id}: {e}")
+            await query.edit_message_text(
+                "❌ Помилка при підтвердженні повернення книги."
+            )
     
     async def _handle_back_to_books(self, query):
         """Handle back to books list"""
@@ -496,6 +884,23 @@ class LibraryBot:
             text += f"   📖 {book['edition']}\n\n"
         
         return text
+    
+    def _get_book_name_by_id(self, book_id):
+        """Get book name by book_id from the sheets"""
+        try:
+            df = self.sheets_manager.read_books()
+            if df.empty:
+                return None
+            
+            # Find book by ID
+            book_row = df[df[config.EXCEL_COLUMNS['id']].astype(str) == str(book_id)]
+            if not book_row.empty:
+                row = book_row.iloc[0]
+                return f"{row[config.EXCEL_COLUMNS['name']]} - {row[config.EXCEL_COLUMNS['author']]}"
+            return None
+        except Exception as e:
+            logger.error(f"Error getting book name for ID {book_id}: {e}")
+            return None
     
     def run(self):
         """Start the bot"""

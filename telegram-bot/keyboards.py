@@ -109,7 +109,8 @@ def get_admin_panel_keyboard():
     keyboard = [
         [InlineKeyboardButton("📦 Книги до доставки", callback_data="admin_delivery_queue")],
         [InlineKeyboardButton("📚 Позначити як доставлено", callback_data="admin_mark_delivered")],
-        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton("🔄 Підтвердити повернення", callback_data="admin_confirm_returns")],
+        [InlineKeyboardButton("📊 Статистика", callback_data="admin_statistics")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")]
     ]
     
@@ -139,11 +140,25 @@ def get_user_book_actions_keyboard():
     
     return InlineKeyboardMarkup(keyboard)
 
-def get_return_confirmation_keyboard():
-    """Return confirmation keyboard"""
+def get_returned_books_keyboard(books):
+    """Keyboard for books pending return confirmation"""
+    keyboard = []
+    
+    for book in books:
+        keyboard.append([InlineKeyboardButton(
+            f"📚 {book['name']} - {book['author']}", 
+            callback_data=f"admin_confirm_return_{book['index']}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton("⬅️ Назад до адмін панелі", callback_data="admin_panel")])
+    
+    return InlineKeyboardMarkup(keyboard)
+
+def get_return_confirmation_keyboard(book_index):
+    """Return confirmation keyboard for admin"""
     keyboard = [
-        [InlineKeyboardButton("✅ Так, повернув", callback_data="confirm_return")],
-        [InlineKeyboardButton("❌ Скасувати", callback_data="my_books")]
+        [InlineKeyboardButton("✅ Підтвердити повернення", callback_data=f"admin_confirmed_return_{book_index}")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="admin_confirm_returns")]
     ]
     
     return InlineKeyboardMarkup(keyboard)

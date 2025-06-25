@@ -6,7 +6,7 @@ from datetime import datetime
 from telegram import Bot
 
 import config
-from google_sheets_manager import GoogleSheetsManager
+from user_manager import UserManager
 from notifications import NotificationManager
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class BookScheduler:
     def __init__(self):
         self.bot = Bot(token=config.BOT_TOKEN)
-        self.sheets_manager = GoogleSheetsManager()
+        self.user_manager = UserManager()
         self.notification_manager = NotificationManager(self.bot)
     
     def start_scheduler(self):
@@ -36,7 +36,7 @@ class BookScheduler:
         logger.info("Checking for overdue books...")
         
         try:
-            overdue_books = self.sheets_manager.get_overdue_books()
+            overdue_books = self.user_manager.get_overdue_books()
             
             if overdue_books:
                 logger.info(f"Found {len(overdue_books)} overdue books")
@@ -53,17 +53,74 @@ class BookScheduler:
         """Send notifications for overdue books"""
         for book in overdue_books:
             try:
-                # Here you would need to find the user_id who has this book
-                # This would require enhancing the Google Sheets structure to track user_id
-                # For now, we'll log the overdue book
-                logger.warning(f"Overdue book: {book['name']} by {book['author']}, "
-                             f"due {book['due_date']}, {book['days_overdue']} days overdue")
+                # Send notification to user
+                user_id = book['user_id']
+                book_id = book['book_id']
+                days_overdue = book['days_overdue']
+                expiry_date = book['expiry_date'].strftime('%d.%m.%Y')
                 
-                # If we had user_id, we would do:
-                # await self.notification_manager.notify_user_book_overdue(user_id, book)
+                # Get book name from sheets using book_id
+                book_name = self._get_book_name_by_id(book_id)
+                if not book_name:
+                    book_name = f"Книга ID: {book_id}"
+                
+                message = (
+                    f"⚠️ <b>Нагадування про повернення книги</b>\n\n"
+                    f"📚 <b>Книга:</b> {book_name}\n"
+                    f"📅 <b>Термін повернення був:</b> {expiry_date}\n"
+                    f"⏰ <b>Прострочено на:</b> {days_overdue} днів\n\n"
+                    f"Будь ласка, поверніть книгу якомога швидше!"
+                )
+                
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=message,
+                    parse_mode='HTML'
+                )
+                
+                # Also notify admins about overdue books
+                admin_message = (
+                    f"📚 <b>Прострочена книга</b>\n\n"
+                    f"👤 <b>Користувач:</b> {book['user_name']}\n"
+                    f"📞 <b>Телефон:</b> {book['user_phone']}\n"
+                    f"📚 <b>Книга:</b> {book_name}\n"
+                    f"📅 <b>Термін був:</b> {expiry_date}\n"
+                    f"⏰ <b>Прострочено на:</b> {days_overdue} днів"
+                )
+                
+                for admin_id in config.ADMIN_IDS:
+                    try:
+                        await self.bot.send_message(
+                            chat_id=admin_id,
+                            text=admin_message,
+                            parse_mode='HTML'
+                        )
+                    except Exception as admin_e:
+                        logger.error(f"Failed to notify admin {admin_id}: {admin_e}")
+                
+                logger.info(f"Sent overdue notification for book ID '{book_id}' to user {user_id}")
                 
             except Exception as e:
-                logger.error(f"Error sending overdue notification for book {book['name']}: {e}")
+                logger.error(f"Error sending overdue notification for book ID {book['book_id']}: {e}")
+    
+    def _get_book_name_by_id(self, book_id):
+        """Get book name by book_id from Google Sheets"""
+        try:
+            from google_sheets_manager import GoogleSheetsManager
+            sheets_manager = GoogleSheetsManager()
+            df = sheets_manager.read_books()
+            if df.empty:
+                return None
+            
+            # Find book by ID
+            book_row = df[df[config.EXCEL_COLUMNS['id']].astype(str) == str(book_id)]
+            if not book_row.empty:
+                row = book_row.iloc[0]
+                return f"{row[config.EXCEL_COLUMNS['name']]} - {row[config.EXCEL_COLUMNS['author']]}"
+            return None
+        except Exception as e:
+            logger.error(f"Error getting book name for ID {book_id}: {e}")
+            return None
 
 def main():
     """Main function to run the scheduler"""
