@@ -69,11 +69,21 @@ jobs:
           passphrase: ${{ secrets.SSH_PASSPHRASE }}
           script: |
             cd ~/kurin-bot/telegram-bot/
-            echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
-            echo "ADMIN_IDS=${{ vars.ADMIN_IDS }}" >> .env
-            echo "GOOGLE_SHEETS_URL=${{ vars.GOOGLE_SHEETS_URL }}" >> .env
-            echo "GOOGLE_SHEET_NAME=${{ vars.GOOGLE_SHEET_NAME }}" >> .env
-            echo "GOOGLE_CREDENTIALS_JSON=${{ secrets.GOOGLE_CREDENTIALS_JSON }}" >> .env
+            # Method 1: Using here document (current approach)
+            cat > .env << 'EOF'
+            BOT_TOKEN=${{ secrets.BOT_TOKEN }}
+            ADMIN_IDS=${{ secrets.ADMIN_IDS }}
+            GOOGLE_SHEETS_URL=${{ vars.GOOGLE_SHEETS_URL }}
+            GOOGLE_SHEET_NAME=${{ vars.GOOGLE_SHEET_NAME }}
+            GOOGLE_CREDENTIALS_JSON='${{ secrets.GOOGLE_CREDENTIALS_JSON }}'
+            EOF
+            
+            # Alternative Method 2: Base64 approach (uncomment if needed)
+            # echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
+            # echo "ADMIN_IDS=${{ secrets.ADMIN_IDS }}" >> .env  
+            # echo "GOOGLE_SHEETS_URL=${{ vars.GOOGLE_SHEETS_URL }}" >> .env
+            # echo "GOOGLE_SHEET_NAME=${{ vars.GOOGLE_SHEET_NAME }}" >> .env
+            # echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' | base64 -w 0 | xargs -I {} echo "GOOGLE_CREDENTIALS_JSON_B64={}" >> .env
 
       - name: Deploy to server
         # Only deploy on main branch
