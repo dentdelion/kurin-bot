@@ -65,7 +65,7 @@ jobs:
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
-          key: ${{ secrets.SSH_PASSWORD }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd ~/kurin-bot/telegram-bot/
             echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
