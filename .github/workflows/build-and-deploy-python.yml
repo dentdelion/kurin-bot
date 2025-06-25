@@ -70,7 +70,7 @@ jobs:
           script: |
             cd ~/kurin-bot/telegram-bot/
             echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
-            echo "ADMIN_IDS=${{ secrets.ADMIN_IDS }}" >> .env
+            echo "ADMIN_IDS=${{ vars.ADMIN_IDS }}" >> .env
             echo "GOOGLE_SHEETS_URL=${{ vars.GOOGLE_SHEETS_URL }}" >> .env
             echo "GOOGLE_SHEET_NAME=${{ vars.GOOGLE_SHEET_NAME }}" >> .env
             echo "GOOGLE_CREDENTIALS_JSON=${{ secrets.GOOGLE_CREDENTIALS_JSON }}" >> .env
@@ -86,7 +86,7 @@ jobs:
           passphrase: ${{ secrets.SSH_PASSPHRASE }}
           script: |
             echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u ${{ secrets.DOCKER_USER }} --password-stdin
-            cd ~/kurin-bot/telegram-bot/
+            cd ~/kurin-bot
             git pull
             docker compose -f docker-compose.yml pull
             docker compose -f docker-compose.yml down
