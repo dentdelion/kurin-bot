@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'telegram-bot/**'
+      - '.github/workflows/build-and-deploy-python.yml'
 
 jobs:
   build-and-deploy:
@@ -29,13 +30,17 @@ jobs:
           # python -m pytest tests/
 
       - name: Build and Push Docker Compose Services
+        # Only build and push on main branch to avoid conflicts
+        if: github.ref == 'refs/heads/main'
         run: |
           cd telegram-bot
-          docker-compose -f docker-compose.yml build telegram-bot
+          docker compose -f docker-compose.yml build telegram-bot
           echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u ${{ secrets.DOCKER_USER }} --password-stdin
-          docker-compose -f docker-compose.yml push telegram-bot
+          docker compose -f docker-compose.yml push telegram-bot
 
       - name: Create .env file in project
+        # Only deploy on main branch
+        if: github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.HOST }}
@@ -50,6 +55,8 @@ jobs:
             echo "GOOGLE_CREDENTIALS_JSON=${{ secrets.GOOGLE_CREDENTIALS_JSON }}" >> .env
 
       - name: Deploy to server
+        # Only deploy on main branch
+        if: github.ref == 'refs/heads/main'
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.HOST }}
