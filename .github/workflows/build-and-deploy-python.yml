@@ -1,0 +1,64 @@
+name: Build and Deploy Python Telegram Bot
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'telegram-bot/**'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Out Repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies and test
+        run: |
+          cd telegram-bot
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Add any tests here if you have them
+          # python -m pytest tests/
+
+      - name: Build and Push Docker Compose Services
+        run: |
+          cd telegram-bot
+          docker-compose -f docker-compose.yml build telegram-bot
+          echo "${{ secrets.DOCKER_PASS }}" | docker login -u ${{ secrets.DOCKER_USER }} --password-stdin
+          docker-compose -f docker-compose.yml push telegram-bot
+
+      - name: Create .env file in project
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            cd ~/kurin-bot/telegram-bot/
+            echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
+            echo "ADMIN_IDS=${{ secrets.ADMIN_IDS }}" >> .env
+            echo "GOOGLE_SHEETS_URL=${{ env.GOOGLE_SHEETS_URL }}" >> .env
+            echo "GOOGLE_SHEET_NAME=${{ env.GOOGLE_SHEET_NAME }}" >> .env
+            echo "GOOGLE_CREDENTIALS_JSON=${{ secrets.GOOGLE_CREDENTIALS_JSON }}" >> .env
+
+      - name: Deploy to server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            docker login -u ${{ secrets.DOCKER_USER }} --password-stdin <<< "${{ secrets.DOCKER_PASSWORD }}"
+            cd ~/kurin-bot/telegram-bot/
+            git pull
+            docker-compose -f docker-compose.yml pull
+            docker-compose -f docker-compose.yml down
+            docker-compose -f docker-compose.yml up -d 

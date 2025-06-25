@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  telegram-bot:
+    build: .
+    container_name: kurin-telegram-bot
+    restart: unless-stopped
+    environment:
+      # Bot configuration
+      - BOT_TOKEN=${BOT_TOKEN}
+      - ADMIN_IDS=${ADMIN_IDS}
+      
+      # Google Sheets configuration
+      - GOOGLE_SHEETS_URL=${GOOGLE_SHEETS_URL}
+      - GOOGLE_CREDENTIALS_FILE=/app/credentials/credentials.json
+      - GOOGLE_SHEET_NAME=${GOOGLE_SHEET_NAME:-Books}
+      
+      # Google credentials as JSON string (alternative to file mounting)
+      - GOOGLE_CREDENTIALS_JSON=${GOOGLE_CREDENTIALS_JSON}
+      
+      # Bot settings
+      - ALLOWED_TIME_TO_READ_THE_BOOK=${ALLOWED_TIME_TO_READ_THE_BOOK:-14}
+      - RULES_TEXT=${RULES_TEXT}
+    # volumes:
+      # Optional: Mount Google credentials file (if not using GOOGLE_CREDENTIALS_JSON env var)
+      # Uncomment the lines below if you prefer to use a mounted file instead of environment variable
+      # - ./credentials/credentials.json:/app/credentials/credentials.json:ro
+    networks:
+      - bot-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  bot-network:
+    driver: bridge 
