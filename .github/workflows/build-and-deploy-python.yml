@@ -37,7 +37,7 @@ jobs:
           username: ${{ secrets.DOCKER_USER }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and Push Docker Compose Services
+      - name: Build and Push Docker Image
         # Only build and push on main branch to avoid conflicts
         if: github.ref == 'refs/heads/main'
         env:
@@ -48,8 +48,15 @@ jobs:
           GOOGLE_SHEET_NAME: ${{ vars.GOOGLE_SHEET_NAME }}
         run: |
           cd telegram-bot
+          # Build the image
           docker compose -f docker-compose.yml build telegram-bot
-          docker compose -f docker-compose.yml push telegram-bot
+          
+          # Tag with commit SHA for versioning
+          docker tag lancea18/kurin-bot:latest lancea18/kurin-bot:${{ github.sha }}
+          
+          # Push both tags
+          docker push lancea18/kurin-bot:latest
+          docker push lancea18/kurin-bot:${{ github.sha }}
 
       - name: Create .env file in project
         # Only deploy on main branch

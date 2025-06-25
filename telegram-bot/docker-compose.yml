@@ -3,6 +3,7 @@ version: '3.8'
 services:
   telegram-bot:
     build: .
+    image: lancea18/kurin-bot:latest
     container_name: kurin-telegram-bot
     restart: unless-stopped
     environment:
