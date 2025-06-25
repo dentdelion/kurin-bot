@@ -69,12 +69,24 @@ jobs:
           passphrase: ${{ secrets.SSH_PASSPHRASE }}
           script: |
             cd ~/kurin-bot/telegram-bot/
-            # Method 1: Using here document (current approach)
+            
+            # Create .env file (without the problematic JSON)
             echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
             echo "ADMIN_IDS=${{ secrets.ADMIN_IDS }}" >> .env  
             echo "GOOGLE_SHEETS_URL=${{ vars.GOOGLE_SHEETS_URL }}" >> .env
             echo "GOOGLE_SHEET_NAME=${{ vars.GOOGLE_SHEET_NAME }}" >> .env
-            echo "GOOGLE_CREDENTIALS_JSON='${{ secrets.GOOGLE_CREDENTIALS_JSON }}'" >> .env
+            echo "GOOGLE_CREDENTIALS_FILE=/app/credentials/credentials.json" >> .env
+            
+            # Create credentials directory if it doesn't exist
+            mkdir -p credentials
+            
+            # Write JSON credentials to separate file (safer approach)
+            cat > credentials/credentials.json << 'CREDENTIALS_EOF'
+            ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+            CREDENTIALS_EOF
+            
+            # Verify the JSON is valid
+            python3 -m json.tool credentials/credentials.json > /dev/null && echo "✅ JSON credentials are valid" || echo "❌ JSON credentials are invalid"
 
       - name: Deploy to server
         # Only deploy on main branch
