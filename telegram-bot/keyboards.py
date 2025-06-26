@@ -3,7 +3,10 @@ import config
 
 def get_phone_keyboard():
     """Keyboard for requesting phone number"""
-    keyboard = [[KeyboardButton("📱 Поділитися номером телефону", request_contact=True)]]
+    keyboard = [
+        [KeyboardButton("📱 Поділитися номером телефону", request_contact=True)],
+        [KeyboardButton("🏠 Головне меню")]
+    ]
     return ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
 
 def get_main_menu_keyboard(is_admin=False):
@@ -134,8 +137,32 @@ def get_user_book_actions_keyboard():
     """User book actions keyboard"""
     keyboard = [
         [InlineKeyboardButton("✅ Забрав книгу", callback_data="user_picked_up")],
-        [InlineKeyboardButton("📤 Повернув книгу", callback_data="user_returned")],
+        [InlineKeyboardButton("📤 Повернути книгу", callback_data="return_books")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")]
+    ]
+    
+    return InlineKeyboardMarkup(keyboard)
+
+def get_user_return_books_keyboard(active_books):
+    """Keyboard for selecting book to return"""
+    keyboard = []
+    
+    for i, book in enumerate(active_books, 1):
+        button_text = f"📚 {i}. {book['display_name']}"
+        keyboard.append([InlineKeyboardButton(
+            button_text, 
+            callback_data=f"return_select_{book['book_id']}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton("⬅️ Назад до моїх книг", callback_data="my_books")])
+    
+    return InlineKeyboardMarkup(keyboard)
+
+def get_return_confirmation_keyboard_user(book_id):
+    """Return confirmation keyboard for user"""
+    keyboard = [
+        [InlineKeyboardButton("📷 Надіслати фото та підтвердити", callback_data=f"return_confirm_{book_id}")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="return_books")]
     ]
     
     return InlineKeyboardMarkup(keyboard)

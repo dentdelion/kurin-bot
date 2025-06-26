@@ -194,7 +194,9 @@ class GoogleSheetsManager:
             row_num = book_index + 2
             col_index = self._get_column_index(config.EXCEL_COLUMNS['status'])
             
-            # Keep status as 'booked' but book is now ready for pickup
+            # Update status to 'delivered' to indicate book is ready for pickup
+            self.worksheet.update_cell(row_num, col_index, config.STATUS_VALUES['DELIVERED'])
+            
             # The row remains yellow until user picks it up
             logger.info(f"Book at row {book_index} marked as delivered and ready for pickup")
             return True
@@ -209,14 +211,16 @@ class GoogleSheetsManager:
             
             # Get column indices
             booked_until_col = self._get_column_index(config.EXCEL_COLUMNS['booked_until'])
+            status_col = self._get_column_index(config.EXCEL_COLUMNS['status'])
             
             # Set due date
             due_date = datetime.now() + timedelta(days=config.ALLOWED_TIME_TO_READ_THE_BOOK)
             
-            # Update due date
+            # Update due date and status
             self.worksheet.update_cell(row_num, booked_until_col, due_date.strftime('%Y-%m-%d'))
+            self.worksheet.update_cell(row_num, status_col, config.STATUS_VALUES['BOOKED'])
             
-            # Status remains 'booked', row remains yellow
+            # Row remains yellow while book is being read
             
             logger.info(f"Book at row {book_index} marked as picked up by user {user_id}")
             return True
