@@ -1,0 +1,146 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Docker service discovery for macOS Docker Desktop
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        target_label: 'container_name'
+      - source_labels: ['__meta_docker_container_id']
+        target_label: 'container_id'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'stream'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_service']
+        target_label: 'service'
+    
+    pipeline_stages:
+      - docker: {}
+      
+      # Extract log level
+      - regex:
+          expression: '.*(?P<level>INFO|ERROR|WARNING|DEBUG|CRITICAL).*'
+          source: 'output'
+      
+      # Add labels
+      - labels:
+          level:
+          stream:
+          container_name:
+          service:
+      
+      - output:
+          source: output
+
+  # Alternative static file approach for fallback
+  - job_name: docker-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: docker-logs
+          __path__: /var/lib/docker/containers/*/*log
+    
+    pipeline_stages:
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            time: time
+            attrs: attrs
+      
+      - json:
+          expressions:
+            tag: tag
+          source: attrs
+      
+      - regex:
+          expression: '(?P<container_name>[^/,]+)'
+          source: tag
+      
+      - timestamp:
+          format: RFC3339Nano
+          source: time
+      
+      - regex:
+          expression: '.*(?P<level>INFO|ERROR|WARNING|DEBUG|CRITICAL).*'
+          source: output
+      
+      - labels:
+          container_name:
+          stream:
+          level:
+      
+      - output:
+          source: output
+
+  # Specific config for Kurin bot with better labeling
+  - job_name: kurin-bot-specific
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: kurin-bot
+          __path__: /var/lib/docker/containers/*/*-json.log
+
+    # Only process logs from kurin-telegram-bot container
+    pipeline_stages:
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            attrs: attrs
+            timestamp: time
+      
+      - json:
+          expressions:
+            tag: tag
+          source: attrs
+      
+      # Only proceed if this is the telegram bot container
+      - match:
+          selector: '{job="kurin-bot"}'
+          stages:
+            - regex:
+                expression: '.*kurin-telegram-bot.*'
+                source: tag
+            
+            - timestamp:
+                format: RFC3339Nano
+                source: timestamp
+            
+            # Extract more details from bot logs
+            - regex:
+                expression: '.*(?P<level>INFO|ERROR|WARNING|DEBUG|CRITICAL).*(?P<module>[a-z_]+\.py).*'
+                source: output
+            
+            - labels:
+                container_name: kurin-telegram-bot
+                service: telegram-bot
+                application: kurin-bot
+                stream:
+                level:
+                module:
+            
+            - output:
+                source: output
+
+  # System logs (optional)
+  - job_name: syslog
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: syslog
+          __path__: /var/log/syslog 
