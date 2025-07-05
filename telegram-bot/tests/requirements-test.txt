@@ -1,0 +1,26 @@
+# Test dependencies for the telegram-bot pickup system tests
+
+# Core testing framework
+unittest2>=1.1.0; python_version < "3.0"
+
+# Mocking and test utilities
+mock>=4.0.0
+
+# Coverage reporting (optional)
+coverage>=6.0.0
+
+# Test discovery and execution
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-mock>=3.10.0
+
+# Database testing utilities (if needed for integration tests)
+pytest-django>=4.5.0
+
+# Code quality and linting for tests
+flake8>=5.0.0
+black>=22.0.0
+
+# Documentation for tests
+sphinx>=5.0.0
+sphinx-rtd-theme>=1.0.0 

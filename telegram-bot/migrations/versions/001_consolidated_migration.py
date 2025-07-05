@@ -29,12 +29,13 @@ def upgrade() -> None:
     )
     
     # Create user_statistics table with INTEGER book_id
+    # date_booked and expiry_date are nullable - will be set when user picks up the book
     op.create_table('user_statistics',
         sa.Column('id', sa.Integer(), nullable=False),
         sa.Column('user_id', sa.Integer(), nullable=False),
         sa.Column('book_id', sa.Integer(), nullable=False),  # Changed to Integer
-        sa.Column('date_booked', sa.DateTime(), nullable=True),
-        sa.Column('expiry_date', sa.DateTime(), nullable=False),
+        sa.Column('date_booked', sa.DateTime(), nullable=True),  # Nullable - set when picked up
+        sa.Column('expiry_date', sa.DateTime(), nullable=True),  # Nullable - set when picked up
         sa.Column('returned', sa.Boolean(), nullable=True),
         sa.Column('returned_at', sa.DateTime(), nullable=True),
         sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),

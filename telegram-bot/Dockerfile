@@ -12,6 +12,7 @@ ENV PYTHONUNBUFFERED=1
 RUN apt-get update && apt-get install -y \
     gcc \
     default-mysql-client \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file
@@ -25,6 +26,9 @@ COPY . .
 
 # Create directory for Google credentials
 RUN mkdir -p /app/credentials
+
+# Ensure all scripts are executable
+RUN chmod +x *.sh 2>/dev/null || true
 
 # Create a non-root user for security
 RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app

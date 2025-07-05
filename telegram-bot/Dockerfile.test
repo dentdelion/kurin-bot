@@ -1,0 +1,40 @@
+# Test-specific Dockerfile for running unit tests only
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+ENV TEST_ENVIRONMENT=true
+
+# Install system dependencies (minimal, no database client needed)
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements files
+COPY requirements.txt .
+COPY tests/requirements-test.txt .
+
+# Install Python dependencies (both main and test requirements)
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -r requirements-test.txt
+
+# Copy the application code
+COPY . .
+
+# Create test-specific directories
+RUN mkdir -p /app/test-results /app/coverage
+
+# Create a non-root user for security
+RUN adduser --disabled-password --gecos '' testuser && \
+    chown -R testuser /app
+USER testuser
+
+# Default command to run unit tests
+CMD ["python", "tests/run_tests.py", "--unit"] 

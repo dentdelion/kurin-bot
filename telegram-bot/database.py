@@ -30,8 +30,8 @@ class UserStatistics(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     book_id = Column(Integer, nullable=False)
-    date_booked = Column(DateTime, default=datetime.now)
-    expiry_date = Column(DateTime, nullable=False)
+    date_booked = Column(DateTime, nullable=True)
+    expiry_date = Column(DateTime, nullable=True)
     returned = Column(Boolean, default=False)
     returned_at = Column(DateTime, nullable=True)
     
@@ -44,7 +44,20 @@ class UserStatistics(Base):
 class DatabaseManager:
     def __init__(self):
         try:
-            self.engine = create_engine(config.DATABASE_URL, echo=False)
+            # Add connection pool settings and retry logic
+            self.engine = create_engine(
+                config.DATABASE_URL, 
+                echo=False,
+                pool_pre_ping=True,
+                pool_recycle=3600,
+                pool_size=10,
+                max_overflow=20,
+                connect_args={
+                    "connect_timeout": 60,
+                    "read_timeout": 60,
+                    "write_timeout": 60
+                }
+            )
             self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
             logger.info("Database connection established successfully")
         except Exception as e:
