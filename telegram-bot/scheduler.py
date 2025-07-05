@@ -1,15 +1,16 @@
 import schedule
 import time
 import asyncio
-import logging
-from datetime import datetime
 from telegram import Bot
 
 import config
 from user_manager import UserManager
 from notifications import NotificationManager
+from logging_config import setup_logging, get_logger
 
-logger = logging.getLogger(__name__)
+# Setup JSON logging
+setup_logging(config.LOG_LEVEL)
+logger = get_logger(__name__)
 
 class BookScheduler:
     def __init__(self):
@@ -19,7 +20,7 @@ class BookScheduler:
     
     def start_scheduler(self):
         """Start the scheduler with all tasks"""
-        logger.info("Starting book scheduler...")
+        logger.info("Starting book scheduler...", extra={'action': 'scheduler_start', 'scheduler_task': 'init'})
         
         # Check for overdue books daily at 10:00 AM
         schedule.every().day.at("10:00").do(self.check_overdue_books)
@@ -33,21 +34,23 @@ class BookScheduler:
     
     def check_overdue_books(self):
         """Check for overdue books and send notifications"""
-        logger.info("Checking for overdue books...")
+        logger.info("Checking for overdue books...", extra={'action': 'check_overdue_books', 'scheduler_task': 'overdue_check'})
         
         try:
             overdue_books = self.user_manager.get_overdue_books()
             
             if overdue_books:
-                logger.info(f"Found {len(overdue_books)} overdue books")
+                logger.info(f"Found {len(overdue_books)} overdue books", 
+                           extra={'action': 'overdue_books_found', 'scheduler_task': 'overdue_check', 'count': len(overdue_books)})
                 
                 # Run async notification function
                 asyncio.run(self._send_overdue_notifications(overdue_books))
             else:
-                logger.info("No overdue books found")
+                logger.info("No overdue books found", extra={'action': 'no_overdue_books', 'scheduler_task': 'overdue_check'})
                 
         except Exception as e:
-            logger.error(f"Error checking overdue books: {e}")
+            logger.error(f"Error checking overdue books: {e}", 
+                        extra={'action': 'overdue_check_error', 'scheduler_task': 'overdue_check'})
     
     async def _send_overdue_notifications(self, overdue_books):
         """Send notifications for overdue books"""

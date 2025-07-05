@@ -5,7 +5,6 @@ Starts both the bot and scheduler in separate processes
 """
 
 import multiprocessing
-import logging
 import sys
 import os
 
@@ -14,14 +13,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from bot import LibraryBot
 from scheduler import BookScheduler
+from logging_config import setup_logging, get_logger
 
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-
-logger = logging.getLogger(__name__)
+# Setup JSON logging
+setup_logging(config.LOG_LEVEL)
+logger = get_logger(__name__)
 
 def run_bot():
     """Run the Telegram bot"""

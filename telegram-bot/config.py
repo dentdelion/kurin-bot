@@ -18,6 +18,9 @@ GOOGLE_SHEET_NAME = os.getenv('GOOGLE_SHEET_NAME', 'Books')  # Name of the works
 ALLOWED_TIME_TO_READ_THE_BOOK = int(os.getenv('ALLOWED_TIME_TO_READ_THE_BOOK', '14'))
 RULES_TEXT = os.getenv('RULES_TEXT', 'Правила користування бібліотекою будуть тут...')
 
+# Logging configuration
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+
 # Book categories
 BOOK_CATEGORIES = [
     'історія',

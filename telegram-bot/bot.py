@@ -3,21 +3,18 @@ import asyncio
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from telegram.error import TelegramError
-from datetime import datetime
 import pandas as pd
 
 import config
 from google_sheets_manager import GoogleSheetsManager
 from user_manager import UserManager
 from notifications import NotificationManager
+from logging_config import setup_logging, get_logger
 import keyboards
 
-# Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+# Setup JSON logging
+setup_logging(config.LOG_LEVEL)
+logger = get_logger(__name__)
 
 class LibraryBot:
     def __init__(self):
@@ -36,6 +33,8 @@ class LibraryBot:
         
         # Register handlers
         self._register_handlers()
+        
+        logger.info("LibraryBot initialized successfully", extra={'action': 'bot_init'})
     
     def _register_handlers(self):
         """Register all command and callback handlers"""
@@ -59,22 +58,29 @@ class LibraryBot:
         """Handle /start command"""
         user_id = update.effective_user.id
         
+        # Log user ID in integer form for admin management
+        logger.info(f"User ID for potential admin addition: {user_id} (integer)", 
+                   extra={'user_id': user_id, 'action': 'start_command', 'admin_candidate': True})
+        
         try:
             # Check if user is registered with error handling
             is_registered = self.user_manager.is_user_registered(user_id)
-            logger.info(f"User {user_id} registration check: {is_registered}")
+            logger.info(f"User registration check: {is_registered}", 
+                       extra={'user_id': user_id, 'action': 'start_command'})
             
             if is_registered:
                 # User is registered, show main menu
                 is_admin = str(user_id) in config.ADMIN_IDS
-                logger.info(f"Showing main menu to registered user {user_id} (admin: {is_admin})")
+                logger.info(f"Showing main menu to registered user (admin: {is_admin})", 
+                           extra={'user_id': user_id, 'action': 'show_main_menu'})
                 await update.message.reply_text(
                     "🏠 Головне меню",
                     reply_markup=keyboards.get_main_menu_keyboard(is_admin)
                 )
             else:
                 # User not registered, request registration
-                logger.info(f"Requesting registration from unregistered user {user_id}")
+                logger.info("Requesting registration from unregistered user", 
+                           extra={'user_id': user_id, 'action': 'request_registration'})
                 await update.message.reply_text(
                     "👋 Вітаємо в бібліотеці!\n\n"
                     "Для користування ботом потрібно зареєструватися. "
@@ -82,7 +88,8 @@ class LibraryBot:
                     reply_markup=keyboards.get_phone_keyboard()
                 )
         except Exception as e:
-            logger.error(f"Error in start_command for user {user_id}: {e}")
+            logger.error(f"Error in start_command: {e}", 
+                        extra={'user_id': user_id, 'action': 'start_command_error'})
             # Fallback to registration request if there's an error
             await update.message.reply_text(
                 "👋 Вітаємо в бібліотеці!\n\n"
@@ -114,24 +121,42 @@ class LibraryBot:
         contact = update.message.contact
         user_id = update.effective_user.id
         
-        # Register user
-        self.user_manager.register_user(
-            user_id=user_id,
-            phone_number=contact.phone_number,
-            first_name=contact.first_name,
-            last_name=contact.last_name
-        )
+        # Log user ID in integer form for admin management
+        logger.info(f"User ID for potential admin addition: {user_id} (integer)", 
+                   extra={'user_id': user_id, 'action': 'user_registration', 'admin_candidate': True})
         
-        # Show main menu
-        is_admin = str(user_id) in config.ADMIN_IDS
-        await update.message.reply_text(
-            "✅ Реєстрацію завершено!\n\n🏠 Головне меню:",
-            reply_markup=keyboards.get_main_menu_keyboard(is_admin)
-        )
+        try:
+            # Register user
+            user = self.user_manager.register_user(
+                user_id=user_id,
+                phone_number=contact.phone_number,
+                first_name=contact.first_name,
+                last_name=contact.last_name
+            )
+            
+            logger.info(f"User registered successfully: {user.name}", 
+                       extra={'user_id': user_id, 'action': 'user_registration_success'})
+            
+            # Show main menu
+            is_admin = str(user_id) in config.ADMIN_IDS
+            await update.message.reply_text(
+                "✅ Реєстрацію завершено!\n\n🏠 Головне меню:",
+                reply_markup=keyboards.get_main_menu_keyboard(is_admin)
+            )
+        except Exception as e:
+            logger.error(f"Error registering user: {e}", 
+                        extra={'user_id': user_id, 'action': 'user_registration_error'})
+            await update.message.reply_text(
+                "❌ Помилка реєстрації. Спробуйте ще раз або зверніться до адміністратора."
+            )
     
     async def handle_main_menu_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle main menu text button"""
         user_id = update.effective_user.id
+        
+        # Log user ID in integer form for admin management
+        logger.info(f"User ID for potential admin addition: {user_id} (integer)", 
+                   extra={'user_id': user_id, 'action': 'main_menu_access', 'admin_candidate': True})
         
         try:
             # Check if user is registered
@@ -162,6 +187,10 @@ class LibraryBot:
     async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle photo for book return"""
         user_id = update.effective_user.id
+        
+        # Log user ID in integer form for admin management
+        logger.info(f"User ID for potential admin addition: {user_id} (integer)", 
+                   extra={'user_id': user_id, 'action': 'photo_upload', 'admin_candidate': True})
         
         if not self.user_manager.is_user_registered(user_id):
             await update.message.reply_text("Спочатку потрібно зареєструватися. Використайте /start")
@@ -247,6 +276,11 @@ class LibraryBot:
         
         data = query.data
         user_id = update.effective_user.id
+        
+        # Log user ID in integer form for admin management (only for non-admin interactions)
+        if not data.startswith('admin_'):
+            logger.info(f"User ID for potential admin addition: {user_id} (integer)", 
+                       extra={'user_id': user_id, 'action': f'callback_{data}', 'admin_candidate': True})
         
         # Check registration for non-admin callbacks
         if not data.startswith('admin_') and not self.user_manager.is_user_registered(user_id):

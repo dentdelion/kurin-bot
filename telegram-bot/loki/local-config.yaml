@@ -28,13 +28,6 @@ ingester:
   chunk_idle_period: 5m
   chunk_retain_period: 30s
 
-query_range:
-  results_cache:
-    cache:
-      embedded_cache:
-        enabled: true
-        max_size_mb: 100
-
 schema_config:
   configs:
     - from: 2020-10-24
@@ -64,14 +57,3 @@ chunk_store_config:
 table_manager:
   retention_deletes_enabled: false
   retention_period: 0s
-
-ruler:
-  storage:
-    type: local
-    local:
-      directory: /loki/rules
-  rule_path: /loki/rules
-  ring:
-    kvstore:
-      store: inmemory
-  enable_api: true

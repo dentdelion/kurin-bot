@@ -36,6 +36,10 @@ class UserManager:
                 session.add(new_user)
                 session.commit()
                 
+                # Log new user registration with integer ID for admin management
+                logger.info(f"NEW USER REGISTERED - User ID for admin addition: {user_id} (integer), Name: {full_name}, Phone: {phone_number}", 
+                           extra={'user_id': user_id, 'action': 'new_user_registration', 'admin_candidate': True, 'user_name': full_name, 'phone': phone_number})
+                
                 logger.info(f"User {user_id} registered: {full_name}")
                 return new_user
             except Exception as e:

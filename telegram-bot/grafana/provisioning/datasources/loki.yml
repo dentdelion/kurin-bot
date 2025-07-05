@@ -11,9 +11,4 @@ datasources:
     version: 1
     editable: false
     jsonData:
-      maxLines: 1000
-      derivedFields:
-        - datasourceUid: loki
-          matcherRegex: "user_id=(\\d+)"
-          name: UserID
-          url: "$${__value.raw}" 
+      maxLines: 1000 
