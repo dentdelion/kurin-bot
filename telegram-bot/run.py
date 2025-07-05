@@ -11,6 +11,7 @@ import os
 # Add current directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import config
 from bot import LibraryBot
 from scheduler import BookScheduler
 from logging_config import setup_logging, get_logger
@@ -40,7 +41,6 @@ def main():
     logger.info("Starting Library Bot system...")
     
     # Check Google Sheets configuration
-    import config
     if not config.GOOGLE_SHEETS_URL:
         logger.warning("GOOGLE_SHEETS_URL not configured")
         logger.info("Please set GOOGLE_SHEETS_URL in your .env file")
