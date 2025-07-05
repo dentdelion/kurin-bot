@@ -22,13 +22,63 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies and test
+      - name: Install dependencies
         run: |
           cd telegram-bot
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Add any tests here if you have them
-          # python -m pytest tests/
+
+      - name: Install test dependencies
+        run: |
+          cd telegram-bot
+          pip install -r tests/requirements-test.txt
+
+      - name: Run code quality checks
+        run: |
+          cd telegram-bot
+          echo "🔍 Running code quality checks..."
+          # Run flake8 for linting
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics || echo "⚠️  Linting issues found (non-blocking)"
+          # Run black for code formatting check
+          black --check . || echo "⚠️  Code formatting issues found (non-blocking)"
+
+      - name: Run unit tests
+        run: |
+          cd telegram-bot
+          echo "🧪 Running unit tests..."
+          python tests/run_tests.py --unit
+          
+      - name: Run specific pickup system tests
+        run: |
+          cd telegram-bot
+          echo "🔍 Running pickup system tests..."
+          python tests/run_tests.py --test-file test_pickup_system.py
+          
+      - name: Run all tests
+        run: |
+          cd telegram-bot
+          echo "🚀 Running all tests..."
+          python tests/run_tests.py --all
+
+      - name: Validate test results
+        run: |
+          cd telegram-bot
+          echo "✅ Validating test results..."
+          # Check if any test files exist
+          if [ ! -f "tests/test_pickup_system.py" ]; then
+            echo "❌ Required test file not found: test_pickup_system.py"
+            exit 1
+          fi
+          echo "✅ All required test files found"
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results
+          path: |
+            telegram-bot/test-results/
+          retention-days: 30
 
       - name: Log in to Docker Hub
         if: github.ref == 'refs/heads/main'
