@@ -197,4 +197,14 @@ def get_admin_delivery_actions_keyboard(book_index):
         [InlineKeyboardButton("⬅️ Назад", callback_data="admin_delivery_queue")]
     ]
     
+    return InlineKeyboardMarkup(keyboard)
+
+def get_admin_statistics_keyboard():
+    """Admin statistics keyboard"""
+    keyboard = [
+        [InlineKeyboardButton("📈 Топ 10 забраних книг (місяць)", callback_data="admin_stats_top_picked")],
+        [InlineKeyboardButton("📋 Загальна статистика", callback_data="admin_stats_general")],
+        [InlineKeyboardButton("⬅️ Назад до адмін панелі", callback_data="admin_panel")]
+    ]
+    
     return InlineKeyboardMarkup(keyboard) 

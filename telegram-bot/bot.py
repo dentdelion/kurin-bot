@@ -6,6 +6,7 @@ import pandas as pd
 import config
 from google_sheets_manager import GoogleSheetsManager
 from user_manager import UserManager
+from book_manager import BookManager
 from notifications import NotificationManager
 from logging_config import setup_logging, get_logger
 import keyboards
@@ -24,6 +25,7 @@ class LibraryBot:
             raise
         
         self.user_manager = UserManager()
+        self.book_manager = BookManager()
         self.notification_manager = NotificationManager(self.application.bot)
         
         # Store pending returns (user_id -> book_id)
@@ -236,7 +238,7 @@ class LibraryBot:
                 # Continue with notification even if sheets update fails
             
             # Mark as returned in local database
-            self.user_manager.mark_book_returned(user_id, book_id)
+            self.book_manager.mark_book_returned(user_id, book_id)
             
             # Send notification to admins with photo
             await self.notification_manager.notify_admins_book_returned(
@@ -338,8 +340,8 @@ class LibraryBot:
         
         try:
             # Get both active books (picked up) and pending pickup books
-            active_books = self.user_manager.get_user_active_books(user_id)
-            pending_books = self.user_manager.get_user_pending_pickup_books(user_id)
+            active_books = self.book_manager.get_user_active_books(user_id)
+            pending_books = self.book_manager.get_user_pending_pickup_books(user_id)
             
             if not active_books and not pending_books:
                 text = "📖 <b>Ваші книги</b>\n\n У вас немає активних книг"
@@ -572,7 +574,7 @@ class LibraryBot:
             # Add to database statistics using book_id instead of book_name
             # This creates a booking record without setting pickup dates
             book_id = book['id']  # Use the book ID from the sheet
-            self.user_manager.add_book_to_statistics(user_id, book_id)
+            self.book_manager.add_book_to_statistics(user_id, book_id)
             
             # Send notifications to admins - get user info safely
             book_info = {
@@ -625,6 +627,12 @@ class LibraryBot:
                 await self._handle_admin_mark_delivered(query)
             elif data == "admin_confirm_returns":
                 await self._handle_admin_confirm_returns(query)
+            elif data == "admin_statistics":
+                await self._handle_admin_statistics(query)
+            elif data == "admin_stats_top_picked":
+                await self._handle_admin_stats_top_picked(query)
+            elif data == "admin_stats_general":
+                await self._handle_admin_stats_general(query)
             elif data.startswith("admin_deliver_"):
                 await self._handle_admin_deliver_book(query, data)
             elif data.startswith("admin_delivered_"):
@@ -717,7 +725,7 @@ class LibraryBot:
             # Find the user who booked this book
             book_id = book['id']
             logger.info(f"Looking for user with active book_id: {book_id}")
-            user_info = self.user_manager.get_user_with_active_book(book_id)
+            user_info = self.book_manager.get_user_with_active_book(book_id)
             
             if user_info:
                 logger.info(f"Found user for book delivery: user_id={user_info['user_id']}, user_name={user_info['user_name']}")
@@ -821,6 +829,146 @@ class LibraryBot:
             logger.error(f"Failed to confirm book return: {e}")
             await query.edit_message_text("❌ Помилка при підтвердженні повернення книги.")
     
+    async def _handle_admin_statistics(self, query):
+        """Handle admin statistics panel - show top picked up books immediately"""
+        try:
+            # Get top picked up books for last month immediately
+            top_picked_books = self.book_manager.get_top_picked_up_books_last_month(limit=10)
+            
+            if not top_picked_books:
+                await query.edit_message_text(
+                    "📈 <b>Топ 10 забраних книг за останній місяць</b>\n\n"
+                    "📈 Дані відсутні - немає забраних книг за останній місяць.\n\n"
+                    "Оберіть інший тип статистики:",
+                    reply_markup=keyboards.get_admin_statistics_keyboard(),
+                    parse_mode='HTML'
+                )
+                return
+            
+            # Format the statistics
+            stats_text = "📈 <b>Топ 10 забраних книг за останній місяць</b>\n\n"
+            
+            for i, book_stat in enumerate(top_picked_books, 1):
+                # Try to get book name from Google Sheets
+                try:
+                    book_name = self._get_book_name_by_id(book_stat['book_id'])
+                    if book_name:
+                        display_name = book_name.split(' - ')[0] if ' - ' in book_name else book_name
+                    else:
+                        display_name = f"Книга ID: {book_stat['book_id']}"
+                except Exception as e:
+                    logger.error(f"Error getting book name for ID {book_stat['book_id']}: {e}")
+                    display_name = f"Книга ID: {book_stat['book_id']}"
+                
+                stats_text += f"{i}. <b>{display_name}</b>\n"
+                stats_text += f"   📚 Забрано разів: {book_stat['pickup_count']}\n\n"
+            
+            stats_text += "📅 Період: останній місяць\n\n"
+            stats_text += "Оберіть інший тип статистики:"
+            
+            await query.edit_message_text(
+                stats_text,
+                reply_markup=keyboards.get_admin_statistics_keyboard(),
+                parse_mode='HTML'
+            )
+            
+        except Exception as e:
+            logger.error(f"Error getting top picked up books statistics: {e}")
+            await query.edit_message_text(
+                "❌ Помилка при отриманні статистики забраних книг.\n\n"
+                "Оберіть інший тип статистики:",
+                reply_markup=keyboards.get_admin_statistics_keyboard()
+            )
+    
+
+    
+    async def _handle_admin_stats_top_picked(self, query):
+        """Handle top picked up books statistics"""
+        try:
+            # Get top picked up books for last month
+            top_picked_books = self.book_manager.get_top_picked_up_books_last_month(limit=10)
+            
+            if not top_picked_books:
+                await query.edit_message_text(
+                    "📈 <b>Топ 10 забраних книг за останній місяць</b>\n\n"
+                    "📈 Дані відсутні - немає забраних книг за останній місяць.",
+                    reply_markup=keyboards.get_admin_statistics_keyboard(),
+                    parse_mode='HTML'
+                )
+                return
+            
+            # Format the statistics
+            stats_text = "📈 <b>Топ 10 забраних книг за останній місяць</b>\n\n"
+            
+            for i, book_stat in enumerate(top_picked_books, 1):
+                # Try to get book name from Google Sheets
+                try:
+                    book_name = self._get_book_name_by_id(book_stat['book_id'])
+                    if book_name:
+                        display_name = book_name.split(' - ')[0] if ' - ' in book_name else book_name
+                    else:
+                        display_name = f"Книга ID: {book_stat['book_id']}"
+                except Exception as e:
+                    logger.error(f"Error getting book name for ID {book_stat['book_id']}: {e}")
+                    display_name = f"Книга ID: {book_stat['book_id']}"
+                
+                stats_text += f"{i}. <b>{display_name}</b>\n"
+                stats_text += f"   📚 Забрано разів: {book_stat['pickup_count']}\n\n"
+            
+            stats_text += "📅 Період: останній місяць"
+            
+            await query.edit_message_text(
+                stats_text,
+                reply_markup=keyboards.get_admin_statistics_keyboard(),
+                parse_mode='HTML'
+            )
+            
+        except Exception as e:
+            logger.error(f"Error getting top picked up books statistics: {e}")
+            await query.edit_message_text(
+                "❌ Помилка при отриманні статистики забраних книг.",
+                reply_markup=keyboards.get_admin_statistics_keyboard()
+            )
+    
+    async def _handle_admin_stats_general(self, query):
+        """Handle general statistics"""
+        try:
+            # Get general admin statistics
+            general_stats = self.book_manager.get_admin_statistics()
+            
+            if not general_stats:
+                await query.edit_message_text(
+                    "📋 <b>Загальна статистика</b>\n\n"
+                    "❌ Не вдалося отримати статистику.",
+                    reply_markup=keyboards.get_admin_statistics_keyboard(),
+                    parse_mode='HTML'
+                )
+                return
+            
+            # Format the statistics
+            stats_text = "📋 <b>Загальна статистика бібліотеки</b>\n\n"
+            stats_text += f"👥 <b>Всього користувачів:</b> {general_stats['total_users']}\n"
+            stats_text += f"📚 <b>Бронювань цього місяця:</b> {general_stats['total_bookings_this_month']}\n"
+            stats_text += f"📦 <b>Забрано книг цього місяця:</b> {general_stats['total_pickups_this_month']}\n"
+            stats_text += f"🔄 <b>Повернень цього місяця:</b> {general_stats['total_returns_this_month']}\n"
+            stats_text += f"📖 <b>Активних позичень:</b> {general_stats['current_active_loans']}\n"
+            stats_text += f"⏰ <b>Прострочених книг:</b> {general_stats['overdue_books_count']}\n"
+            stats_text += f"⏳ <b>Очікують отримання:</b> {general_stats['pending_pickup_count']}\n\n"
+            stats_text += f"📅 Статистика з: {general_stats['month_ago_date'][:10]}"
+            
+            await query.edit_message_text(
+                stats_text,
+                reply_markup=keyboards.get_admin_statistics_keyboard(),
+                parse_mode='HTML'
+            )
+            
+        except Exception as e:
+            logger.error(f"Error getting general statistics: {e}")
+            await query.edit_message_text(
+                "❌ Помилка при отриманні загальної статистики.",
+                reply_markup=keyboards.get_admin_statistics_keyboard()
+            )
+    
     async def _get_delivery_debug_info(self, base_message):
         """Get debug information for delivery queue"""
         try:
@@ -849,7 +997,7 @@ class LibraryBot:
         
         try:
             # Get user's pending pickup books (books that are booked but not picked up)
-            pending_books = self.user_manager.get_user_pending_pickup_books(user_id)
+            pending_books = self.book_manager.get_user_pending_pickup_books(user_id)
             
             if not pending_books:
                 await query.edit_message_text(
@@ -889,7 +1037,7 @@ class LibraryBot:
                     self.sheets_manager.mark_as_picked_up(book_index, user_id)
                     
                     # Mark as picked up in local database and set pickup dates
-                    self.user_manager.mark_book_picked_up(user_id, book_id)
+                    self.book_manager.mark_book_picked_up(user_id, book_id)
                     
                     # Get user info for admin notification
                     user_info = self.user_manager.get_user(user_id)
@@ -911,7 +1059,7 @@ class LibraryBot:
                     logger.info(f"User {user_id} confirmed pickup of book {book_id} ({book_name})")
                     
                     # Get the updated book info after marking as picked up
-                    updated_book = self.user_manager.get_user_active_books(user_id)
+                    updated_book = self.book_manager.get_user_active_books(user_id)
                     if updated_book and len(updated_book) > 0:
                         # Find the book we just picked up
                         picked_up_book = next((b for b in updated_book if b['book_id'] == book_id), None)
@@ -1019,7 +1167,7 @@ class LibraryBot:
         
         try:
             # Get user's active books
-            active_books = self.user_manager.get_user_active_books(user_id)
+            active_books = self.book_manager.get_user_active_books(user_id)
             
             if not active_books:
                 await query.edit_message_text(
