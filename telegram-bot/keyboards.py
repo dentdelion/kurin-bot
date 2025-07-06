@@ -111,7 +111,6 @@ def get_admin_panel_keyboard():
     """Admin panel keyboard"""
     keyboard = [
         [InlineKeyboardButton("📦 Книги до доставки", callback_data="admin_delivery_queue")],
-        [InlineKeyboardButton("📚 Позначити як доставлено", callback_data="admin_mark_delivered")],
         [InlineKeyboardButton("🔄 Підтвердити повернення", callback_data="admin_confirm_returns")],
         [InlineKeyboardButton("📊 Статистика", callback_data="admin_statistics")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")]
@@ -136,7 +135,7 @@ def get_delivery_books_keyboard(books):
 def get_user_book_actions_keyboard():
     """User book actions keyboard"""
     keyboard = [
-        [InlineKeyboardButton("✅ Забрав книгу", callback_data="user_picked_up")],
+        [InlineKeyboardButton("✅ Забрати книгу", callback_data="pickup_books")],
         [InlineKeyboardButton("📤 Повернути книгу", callback_data="return_books")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")]
     ]
@@ -205,6 +204,29 @@ def get_admin_statistics_keyboard():
         [InlineKeyboardButton("📈 Топ 10 забраних книг (місяць)", callback_data="admin_stats_top_picked")],
         [InlineKeyboardButton("📋 Загальна статистика", callback_data="admin_stats_general")],
         [InlineKeyboardButton("⬅️ Назад до адмін панелі", callback_data="admin_panel")]
+    ]
+    
+    return InlineKeyboardMarkup(keyboard)
+
+def get_pickup_books_keyboard(pending_books):
+    """Keyboard for selecting book to pickup"""
+    keyboard = []
+    
+    for book in pending_books:
+        keyboard.append([InlineKeyboardButton(
+            f"📚 {book['display_name']}", 
+            callback_data=f"pickup_select_{book['book_id']}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton("⬅️ Назад до моїх книг", callback_data="my_books")])
+    
+    return InlineKeyboardMarkup(keyboard)
+
+def get_pickup_confirmation_keyboard(book_id):
+    """Pickup confirmation keyboard for user"""
+    keyboard = [
+        [InlineKeyboardButton("✅ Підтвердити отримання", callback_data=f"pickup_confirm_{book_id}")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="pickup_books")]
     ]
     
     return InlineKeyboardMarkup(keyboard) 

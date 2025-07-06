@@ -10,6 +10,13 @@ ADMIN_IDS = [id.strip() for id in os.getenv('ADMIN_IDS', '').split(',') if id.st
 # Database configuration
 DATABASE_URL = os.getenv('DATABASE_URL', 'mysql+pymysql://root:password@localhost:3306/kurin_bot')
 
+# Redis configuration
+REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
+REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
+REDIS_DB = int(os.getenv('REDIS_DB', '0'))
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
+REDIS_CACHE_TTL = int(os.getenv('REDIS_CACHE_TTL', '3600'))  # 1 hour default (book statuses change daily, but core data is stable)
+
 # Google Sheets configuration
 GOOGLE_SHEETS_URL = os.getenv('GOOGLE_SHEETS_URL', '')
 GOOGLE_CREDENTIALS_FILE = os.getenv('GOOGLE_CREDENTIALS_FILE', 'credentials.json')

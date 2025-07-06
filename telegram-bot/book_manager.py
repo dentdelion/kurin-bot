@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import and_, func, desc
 from database import db_manager, User, UserStatistics
 import config
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,18 @@ class BookManager:
     def __init__(self):
         """Initialize BookManager with database connection"""
         self.db_manager = db_manager
+        
+        # Initialize cache manager (will be None if Redis is not available)
+        try:
+            from cache_manager import BookStatusCache
+            self.cache = BookStatusCache()
+            logger.info("Cache manager initialized in BookManager")
+        except ImportError:
+            logger.warning("Redis not available, BookManager running without cache")
+            self.cache = None
+        except Exception as e:
+            logger.warning(f"Failed to initialize cache manager in BookManager: {e}")
+            self.cache = None
     
     def add_book_to_statistics(self, user_id, book_id):
         """
@@ -237,7 +250,8 @@ class BookManager:
     
     def get_user_pending_pickup_books(self, user_id):
         """
-        Get user's books that are booked but not yet picked up
+        Get user's books that are booked but haven't been picked up yet
+        (shows all booked books regardless of delivery status)
         
         Args:
             user_id (int): Telegram user ID
@@ -254,8 +268,8 @@ class BookManager:
                 if not user:
                     return []
                 
-                # Get books that are booked but not picked up yet (date_booked is null)
-                pending_books = session.query(UserStatistics).filter(
+                # Get all user's booked books that haven't been picked up yet (date_booked is null)
+                booked_books = session.query(UserStatistics).filter(
                     and_(
                         UserStatistics.user_id == user.id,
                         UserStatistics.returned == False,
@@ -264,18 +278,159 @@ class BookManager:
                 ).all()
                 
                 result = []
-                for book in pending_books:
+                logger.info(f"Found {len(booked_books)} booked books for user {user_id} that haven't been picked up")
+                
+                for book in booked_books:
+                    book_id = str(book.book_id)
+                    
+                    # Get book status from cache/Google Sheets
+                    status = self.get_book_status(book_id)
+                    
+                    # Include all booked books, not just those with 'delivered' status
+                    # This way users can see all their booked books and their current status
                     result.append({
                         'book_id': book.book_id,
                         'date_booked': None,
                         'expiry_date': None,
-                        'days_left': None
+                        'days_left': None,
+                        'status': status
                     })
+                    
+                    if status and status.lower() == config.STATUS_VALUES['DELIVERED']:
+                        logger.debug(f"Book {book_id} has delivered status, ready for pickup")
+                    else:
+                        logger.debug(f"Book {book_id} status: {status}, not yet delivered")
                 
+                logger.info(f"Returning {len(result)} booked books for user {user_id}")
                 return result
             except Exception as e:
                 logger.error(f"Error getting pending pickup books for user {user_id}: {e}")
                 raise
+    
+    def get_book_status(self, book_id: str) -> str:
+        """
+        Get book status efficiently using cache first, then Google Sheets
+        
+        Args:
+            book_id (str): Book ID
+            
+        Returns:
+            str: Book status or empty string if not found
+        """
+        # Try cache first
+        if self.cache:
+            cached_status = self.cache.get_book_status(book_id)
+            if cached_status is not None:
+                return cached_status
+        
+        # Fallback to Google Sheets - we need to get the status directly
+        try:
+            # Import here to avoid circular imports
+            from google_sheets_manager import GoogleSheetsManager
+            sheets_manager = GoogleSheetsManager()
+            df = sheets_manager.read_books()
+            
+            if not df.empty:
+                book_row = df[df[config.EXCEL_COLUMNS['id']].astype(str) == str(book_id)]
+                if not book_row.empty:
+                    row = book_row.iloc[0]
+                    status = row[config.EXCEL_COLUMNS['status']]
+                    return str(status) if pd.notna(status) else ""
+            
+            logger.debug(f"Book {book_id} not found in Google Sheets")
+            return ""
+        except Exception as e:
+            logger.error(f"Error getting book status for {book_id} from Google Sheets: {e}")
+            return ""
+    
+    def get_book_info(self, book_id: str) -> dict:
+        """
+        Get complete book information efficiently using cache first
+        
+        Args:
+            book_id (str): Book ID
+            
+        Returns:
+            dict: Book information or empty dict if not found
+        """
+        # Try cache first
+        if self.cache:
+            cached_info = self.cache.get_book(book_id)
+            if cached_info:
+                return cached_info
+        
+        # Fallback to Google Sheets
+        try:
+            # Import here to avoid circular imports
+            from google_sheets_manager import GoogleSheetsManager
+            sheets_manager = GoogleSheetsManager()
+            df = sheets_manager.read_books()
+            
+            if not df.empty:
+                book_row = df[df[config.EXCEL_COLUMNS['id']].astype(str) == str(book_id)]
+                if not book_row.empty:
+                    row = book_row.iloc[0]
+                    return {
+                        'id': str(row[config.EXCEL_COLUMNS['id']]),
+                        'name': str(row[config.EXCEL_COLUMNS['name']]) if pd.notna(row[config.EXCEL_COLUMNS['name']]) else '',
+                        'author': str(row[config.EXCEL_COLUMNS['author']]) if pd.notna(row[config.EXCEL_COLUMNS['author']]) else '',
+                        'edition': str(row[config.EXCEL_COLUMNS['edition']]) if pd.notna(row[config.EXCEL_COLUMNS['edition']]) else '',
+                        'status': str(row[config.EXCEL_COLUMNS['status']]) if pd.notna(row[config.EXCEL_COLUMNS['status']]) else '',
+                        'booked_until': str(row[config.EXCEL_COLUMNS['booked_until']]) if pd.notna(row[config.EXCEL_COLUMNS['booked_until']]) else '',
+                        'categories': str(row[config.EXCEL_COLUMNS['categories']]) if pd.notna(row[config.EXCEL_COLUMNS['categories']]) else ''
+                    }
+            
+            logger.debug(f"Book {book_id} not found in Google Sheets")
+            return {}
+        except Exception as e:
+            logger.error(f"Error getting book info for {book_id} from Google Sheets: {e}")
+            return {}
+    
+    def get_user_books_with_status(self, user_id: int) -> list:
+        """
+        Get user's books with their current status from cache/Google Sheets
+        
+        Args:
+            user_id (int): Telegram user ID
+            
+        Returns:
+            list: List of dictionaries with book info and status
+        """
+        try:
+            # Get user's books from database
+            active_books = self.get_user_active_books(user_id)
+            pending_books = self.get_user_pending_pickup_books(user_id)
+            
+            all_books = active_books + pending_books
+            result = []
+            
+            for book in all_books:
+                book_id = str(book['book_id'])
+                
+                # Use status from pending_books if available (already checked via cache)
+                # Otherwise get status from cache/Google Sheets
+                status = book.get('status') or self.get_book_status(book_id)
+                
+                # Get book info from cache/Google Sheets
+                book_info = self.get_book_info(book_id)
+                
+                book_data = {
+                    'book_id': book_id,
+                    'date_booked': book.get('date_booked'),
+                    'expiry_date': book.get('expiry_date'),
+                    'days_left': book.get('days_left'),
+                    'status': status,
+                    'name': book_info.get('name', f"Книга ID: {book_id}"),
+                    'author': book_info.get('author', 'Невідомий автор')
+                }
+                
+                result.append(book_data)
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error getting user books with status for user {user_id}: {e}")
+            return []
     
     def get_overdue_books(self):
         """
@@ -305,11 +460,16 @@ class BookManager:
                     # Since we're using timezone-naive datetimes, no timezone conversion needed
                     expiry_date = stat.expiry_date
                     
+                    # Extract user attributes while session is still active
+                    user_telegram_id = user.telegram_id
+                    user_name = user.name
+                    user_phone = user.phone
+                    
                     days_overdue = (current_time - expiry_date).days
                     result.append({
-                        'user_id': user.telegram_id,
-                        'user_name': user.name,
-                        'user_phone': user.phone,
+                        'user_id': user_telegram_id,
+                        'user_name': user_name,
+                        'user_phone': user_phone,
                         'book_id': stat.book_id,
                         'date_booked': stat.date_booked,
                         'expiry_date': stat.expiry_date,
@@ -384,8 +544,11 @@ class BookManager:
         """
         with self.db_manager.get_session() as session:
             try:
+                logger.info("Starting get_top_picked_up_books_last_month query")
+                
                 # Calculate date one month ago
                 month_ago = datetime.now() - timedelta(days=30)
+                logger.info(f"Calculated month_ago date: {month_ago}")
                 
                 # Query for most often picked up books in the last month
                 # Only consider books that have been picked up (date_booked is not null)
@@ -403,6 +566,8 @@ class BookManager:
                     func.count(UserStatistics.id).desc()  # Most picked up first
                 ).limit(limit).all()
                 
+                logger.info(f"Query executed successfully, found {len(top_books)} results")
+                
                 result = [{
                     'book_id': book.book_id,
                     'pickup_count': book.pickup_count
@@ -411,61 +576,13 @@ class BookManager:
                 logger.info(f"Retrieved top {len(result)} picked up books for last month")
                 return result
             except Exception as e:
-                logger.error(f"Error getting top picked up books: {e}")
+                logger.error(f"Error getting top picked up books: {e}", exc_info=True)
                 raise
     
-    def get_user_statistics(self, user_id):
-        """
-        Get comprehensive statistics for a user
-        
-        Args:
-            user_id (int): Telegram user ID
-            
-        Returns:
-            dict: Dictionary containing user statistics or None if user not found
-            
-        Raises:
-            Exception: Database errors are logged and re-raised
-        """
-        with self.db_manager.get_session() as session:
-            try:
-                user = session.query(User).filter(User.telegram_id == str(user_id)).first()
-                if not user:
-                    return None
-                
-                # Get all user statistics
-                all_books = session.query(UserStatistics).filter(
-                    UserStatistics.user_id == user.id
-                ).all()
-                
-                total_books = len(all_books)
-                returned_books = len([book for book in all_books if book.returned])
-                picked_up_books = len([book for book in all_books if book.date_booked is not None])
-                active_picked_up_books = len([book for book in all_books if book.date_booked is not None and not book.returned])
-                pending_pickup_books = len([book for book in all_books if book.date_booked is None and not book.returned])
-                
-                return {
-                    'total_books_booked': total_books,
-                    'books_picked_up': picked_up_books,
-                    'books_pending_pickup': pending_pickup_books,
-                    'returned_books': returned_books,
-                    'active_picked_up_books': active_picked_up_books,
-                    'books_history': [{
-                        'book_id': book.book_id,
-                        'date_booked': book.date_booked,
-                        'expiry_date': book.expiry_date,
-                        'returned': book.returned,
-                        'returned_at': book.returned_at,
-                        'picked_up': book.date_booked is not None
-                    } for book in all_books]
-                }
-            except Exception as e:
-                logger.error(f"Error getting user statistics for {user_id}: {e}")
-                raise
     
-    def get_user_with_active_book(self, book_id):
+    def get_user_with_booked_book(self, book_id):
         """
-        Get user who currently has a specific book picked up (not just booked)
+        Get user who currently has a specific book booked but not delivered yet 
         
         Args:
             book_id (int): Book ID from Google Sheets
@@ -494,35 +611,26 @@ class BookManager:
                     and_(
                         UserStatistics.book_id == int_book_id,
                         UserStatistics.returned == False,
-                        UserStatistics.date_booked != None  # Only books that have been picked up
+                        UserStatistics.date_booked == None  # Only books that have been not delivered yet
                     )
                 ).first()
                 
                 if result:
                     stat, user = result
-                    logger.info(f"Found active pickup: user_id={user.telegram_id}, book_id={stat.book_id}")
+                    # Extract user attributes while session is still active
+                    user_telegram_id = user.telegram_id
+                    user_name = user.name
+                    user_phone = user.phone
+                    logger.info(f"Found active pickup: user_id={user_telegram_id}, book_id={stat.book_id}")
                     return {
-                        'user_id': user.telegram_id,
-                        'user_name': user.name,
-                        'user_phone': user.phone,
+                        'user_id': user_telegram_id,
+                        'user_name': user_name,
+                        'user_phone': user_phone,
                         'date_booked': stat.date_booked,
                         'expiry_date': stat.expiry_date
                     }
                 else:
                     logger.warning(f"No active pickup found for book_id: {int_book_id}")
-                    
-                    # Debug: Show all active pickups
-                    all_active = session.query(UserStatistics).filter(
-                        and_(
-                            UserStatistics.returned == False,
-                            UserStatistics.date_booked != None  # Only books that have been picked up
-                        )
-                    ).all()
-                    if all_active:
-                        logger.info(f"All active pickups: {[(stat.book_id, type(stat.book_id), stat.user_id) for stat in all_active]}")
-                    else:
-                        logger.info("No active pickups found in database")
-                    
                 return None
             except Exception as e:
                 logger.error(f"Error finding user with book {book_id}: {e}")
