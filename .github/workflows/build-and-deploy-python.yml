@@ -15,10 +15,10 @@ jobs:
 
     steps:
       - name: Check Out Repo
-        uses: actions/checkout@latest
+        uses: actions/checkout
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@latest
+        uses: actions/setup-python
         with:
           python-version: '3.11'
 
@@ -44,7 +44,7 @@ jobs:
 
       - name: Log in to Docker Hub
         if: github.ref == 'refs/heads/main'
-        uses: docker/login-action@latest
+        uses: docker/login-action
         with:
           username: ${{ secrets.DOCKER_USER }}
           password: ${{ secrets.DOCKER_PASSWORD }}
@@ -73,7 +73,7 @@ jobs:
       - name: Create .env file in project
         # Only deploy on main branch
         if: github.ref == 'refs/heads/main'
-        uses: appleboy/ssh-action@latest
+        uses: appleboy/ssh-action
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.SSH_USERNAME }}
@@ -123,7 +123,7 @@ jobs:
       - name: Deploy to server with database
         # Only deploy on main branch
         if: github.ref == 'refs/heads/main'
-        uses: appleboy/ssh-action@latest
+        uses: appleboy/ssh-action
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.SSH_USERNAME }}
